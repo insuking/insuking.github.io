@@ -1,0 +1,77 @@
+.app-shell {
+  max-width: 412px;
+  margin: 0 auto;
+  min-height: 100vh;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #1a1a2e;
+  background: #f7f8fb;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.app-header h1 {
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.status-badge {
+  font-size: 0.75rem;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+
+.status-ok {
+  background: #dff5e1;
+  color: #1f7a34;
+}
+
+.status-warn {
+  background: #fdeee0;
+  color: #a15c00;
+}
+
+.card {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 14px 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.card-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+
+.card-title {
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+
+.muted {
+  color: #6b7280;
+  font-size: 0.9rem;
+}
+
+.cta {
+  width: 100%;
+  min-height: 44px;
+  border: none;
+  border-radius: 10px;
+  background: #2f5fff;
+  color: white;
+  font-size: 1rem;
+  margin-top: 8px;
+}
+
+.cta:disabled {
+  background: #c7d0e0;
+}

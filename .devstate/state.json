@@ -1,0 +1,8 @@
+{
+  "current_day": 0,
+  "completed_phases": ["P0"],
+  "active_phase": "P1",
+  "blocked": false,
+  "last_verified_commit": null,
+  "last_test_result": "PASS"
+}
