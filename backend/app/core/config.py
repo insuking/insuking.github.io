@@ -36,6 +36,16 @@ class Settings(BaseSettings):
     def kis_configured(self) -> bool:
         return bool(self.kis_app_key and self.kis_app_secret)
 
+    # Toss Securities Open API - see docs/TOSS_SETUP.md. Same "empty means
+    # not configured, never pretend" rule as KIS above.
+    toss_client_id: str = ""
+    toss_client_secret: str = ""
+    toss_rest_base_url: str = "https://openapi.tossinvest.com"
+
+    @property
+    def toss_configured(self) -> bool:
+        return bool(self.toss_client_id and self.toss_client_secret)
+
 
 @lru_cache
 def get_settings() -> Settings:
