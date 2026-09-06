@@ -1,0 +1,129 @@
+.rec-card {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 14px 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rec-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.rec-card__symbol {
+  font-weight: 700;
+  font-size: 1.05rem;
+  margin-right: 8px;
+  white-space: nowrap;
+}
+
+.rec-card__state {
+  font-size: 0.75rem;
+  color: #2f5fff;
+  background: #eaefff;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.rec-card__score {
+  font-weight: 600;
+  color: #1f7a34;
+}
+
+.rec-card__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.rec-card__cell--wide {
+  grid-column: span 2;
+}
+
+.rec-card__cell,
+.rec-card__summary > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rec-card__label {
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.rec-card__value {
+  font-weight: 600;
+}
+
+.rec-card__summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #eef0f4;
+}
+
+.rec-card__toggle {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  color: #2f5fff;
+  font-size: 0.85rem;
+  padding: 0;
+  cursor: pointer;
+}
+
+.rec-card__details {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  font-size: 0.85rem;
+  background: #f7f8fb;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.rec-card__details-title {
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.rec-card__details ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.rec-card__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 6px;
+}
+
+.rec-card__countdown {
+  font-size: 0.8rem;
+  color: #a15c00;
+}
+
+.rec-card__cta {
+  flex: 1;
+  min-height: 44px;
+  border: none;
+  border-radius: 10px;
+  background: #2f5fff;
+  color: white;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.rec-card__cta:disabled {
+  background: #c7d0e0;
+}

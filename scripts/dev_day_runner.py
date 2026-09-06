@@ -149,6 +149,8 @@ def run_baseline_gate() -> list[StepResult]:
     steps.append(StepResult("backend: full pytest suite", ok, out))
     ok, out = run(["npm", "run", "lint"], frontend_dir)
     steps.append(StepResult("frontend: lint", ok, out))
+    ok, out = run(["npm", "run", "test"], frontend_dir)
+    steps.append(StepResult("frontend: test", ok, out))
     ok, out = run(["npm", "run", "build"], frontend_dir)
     steps.append(StepResult("frontend: build", ok, out))
     return steps
