@@ -47,11 +47,19 @@ class Settings(BaseSettings):
         return bool(self.toss_client_id and self.toss_client_secret)
 
     # Upbit public market data (P7) - ticker/trade/orderbook/candles need no
-    # API key at all. UPBIT_ACCESS_KEY/UPBIT_SECRET_KEY (added to
-    # .env.example on Day 0) are for later, authenticated phases (account
-    # balance, order placement) and are not read by this phase.
+    # API key at all.
     upbit_ws_url: str = "wss://api.upbit.com/websocket/v1"
     upbit_rest_base_url: str = "https://api.upbit.com"
+
+    # Upbit authenticated endpoints (P15: order placement/cancel/status) -
+    # see docs/UPBIT_NOTES.md. Same "empty means not configured, never
+    # pretend" rule as KIS/Toss.
+    upbit_access_key: str = ""
+    upbit_secret_key: str = ""
+
+    @property
+    def upbit_configured(self) -> bool:
+        return bool(self.upbit_access_key and self.upbit_secret_key)
 
     # Kakao Login + "send to me" notification (P12) - see docs/KAKAO_SETUP.md.
     # `kakao_client_secret` is intentionally not required for `kakao_configured`:

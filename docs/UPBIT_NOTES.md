@@ -48,6 +48,46 @@ payload before depending on them for anything money-moving:
   `low_price`, `trade_price`, `candle_acc_trade_volume`.
 - Error envelope: `{"error": {"name": ..., "message": ...}}`.
 
+## P15: authenticated order placement/cancel/status
+
+`UPBIT_ACCESS_KEY`/`UPBIT_SECRET_KEY` unlock `app/integrations/upbit/auth.py`
+and `orders.py` - place/cancel/status on real orders, gated by
+`LIVE_TRADING` the same way `app/integrations/toss/execution.py` gates Toss
+(see docs/MASTER_SPEC.md section A). Verified against the same
+`sharebook-kr/pyupbit` source as the public endpoints above (`docs.upbit.com`
+is still blocked):
+
+- Auth: every authenticated request carries `Authorization: Bearer <jwt>`.
+  The JWT payload is `{access_key, nonce}` plus, when the request has
+  parameters, `{query_hash: sha512(urlencode(params, doseq=True) with
+  "%5B%5D=" -> "[]=" ), query_hash_alg: "SHA512"}`, signed HS256 with the
+  secret key.
+- `POST /v1/orders` (place): `{market, side: "bid"|"ask", ord_type:
+  "limit"|"price"|"market", volume?, price?}` -> `{uuid, state, ...}`.
+- `DELETE /v1/order` (cancel) and `GET /v1/order` (status): `{uuid}`.
+- `GET /v1/orders` (list, used for reconciliation): `{market, state, page,
+  limit, order_by}`. `state` is one of `wait`/`watch` (open), `done`
+  (filled), `cancel` (cancelled).
+
+**A real behavioral question this sandbox could not settle**: pyupbit's own
+GET/DELETE calls pass their parameters via `requests`' `data=` (a request
+body), even though the JWT's `query_hash` is computed as if they were a URL
+query string. `app/integrations/upbit/orders.py` sends them as an actual
+URL query string instead - the conventional place for GET/DELETE
+parameters, and what the hash construction is inherently modeling - but
+whether Upbit's real server also accepts (or specifically requires)
+pyupbit's body-based form was not independently confirmed either way.
+Re-check the first real authenticated call against this before trusting it
+in STAGING.
+
+**Not verified at all**: a client-supplied idempotency/`identifier` field.
+pyupbit's own source has TODO comments acknowledging it isn't implemented.
+`app/integrations/upbit/execution.py` does not invent one - see that
+module's docstring for what this means for retry safety (short version: a
+timed-out `place_order()` call can never be safely retried automatically,
+since there's no confirmed way to prove the original didn't already go
+through).
+
 ## Why there's no WS candle channel here
 
 Upbit's public WebSocket does not offer a real-time candle stream - only

@@ -34,3 +34,11 @@ class TossApiError(RuntimeError):
 
 class TossRateLimitError(TossApiError):
     """HTTP 429 specifically - callers may retry after backing off."""
+
+
+class TossDuplicateOrderError(TossApiError):
+    """HTTP 409 from `POST /api/v1/orders` specifically - Toss's own
+    idempotency signal that this `clientOrderId` was already submitted (see
+    docs/TOSS_SETUP.md). Not necessarily a failure: the original request may
+    have succeeded. Callers must reconcile rather than silently retrying
+    with a new id (docs/MASTER_SPEC.md P15: "no blind retries")."""

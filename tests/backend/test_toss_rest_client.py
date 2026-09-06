@@ -7,7 +7,7 @@ import pytest
 
 from app.core.config import Settings
 from app.integrations.toss.auth import TossAuth
-from app.integrations.toss.errors import TossApiError, TossRateLimitError
+from app.integrations.toss.errors import TossApiError, TossDuplicateOrderError, TossRateLimitError
 from app.integrations.toss.rest_client import TossRestClient, mask_account_identifier
 
 pytestmark = pytest.mark.P5
@@ -62,54 +62,191 @@ async def test_get_accounts_unwraps_result_envelope() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_holdings_sends_account_seq_param() -> None:
+async def test_get_holdings_sends_account_seq_as_header() -> None:
+    seen_headers = {}
     seen_params = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         auth_resp = _auth_ok(request)
         if auth_resp:
             return auth_resp
+        seen_headers.update(dict(request.headers))
         seen_params.update(dict(request.url.params))
         return httpx.Response(200, json={"result": {"holdings": []}})
 
     _client, rest = _client_and_rest(handler)
     await rest.get_holdings("SEQ-1")
 
-    assert seen_params == {"accountSeq": "SEQ-1"}
+    assert seen_headers["x-tossinvest-account"] == "SEQ-1"
+    assert seen_params == {}
 
 
 @pytest.mark.asyncio
 async def test_get_orders_includes_status_when_given() -> None:
+    seen_headers = {}
     seen_params = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         auth_resp = _auth_ok(request)
         if auth_resp:
             return auth_resp
+        seen_headers.update(dict(request.headers))
         seen_params.update(dict(request.url.params))
         return httpx.Response(200, json={"result": []})
 
     _client, rest = _client_and_rest(handler)
     await rest.get_orders("SEQ-1", status="OPEN")
 
-    assert seen_params == {"accountSeq": "SEQ-1", "status": "OPEN"}
+    assert seen_headers["x-tossinvest-account"] == "SEQ-1"
+    assert seen_params == {"status": "OPEN"}
 
 
 @pytest.mark.asyncio
 async def test_get_buying_power_defaults_currency_to_krw() -> None:
+    seen_headers = {}
     seen_params = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         auth_resp = _auth_ok(request)
         if auth_resp:
             return auth_resp
+        seen_headers.update(dict(request.headers))
         seen_params.update(dict(request.url.params))
         return httpx.Response(200, json={"result": {"amount": "0"}})
 
     _client, rest = _client_and_rest(handler)
     await rest.get_buying_power("SEQ-1")
 
-    assert seen_params == {"accountSeq": "SEQ-1", "currency": "KRW"}
+    assert seen_headers["x-tossinvest-account"] == "SEQ-1"
+    assert seen_params == {"currency": "KRW"}
+
+
+# --- order placement/modification/cancellation (P15) ------------------
+
+
+@pytest.mark.asyncio
+async def test_create_order_sends_account_header_and_body() -> None:
+    seen_headers = {}
+    seen_bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        auth_resp = _auth_ok(request)
+        if auth_resp:
+            return auth_resp
+        seen_headers.update(dict(request.headers))
+        import json as _json
+
+        seen_bodies.append(_json.loads(request.content))
+        return httpx.Response(
+            200, json={"result": {"orderId": "order-abc", "clientOrderId": "local-1"}}
+        )
+
+    _client, rest = _client_and_rest(handler)
+    result = await rest.create_order(
+        "SEQ-1",
+        symbol="005930",
+        side="BUY",
+        order_type="LIMIT",
+        quantity="1",
+        price="70000",
+        client_order_id="local-1",
+    )
+
+    assert seen_headers["x-tossinvest-account"] == "SEQ-1"
+    assert seen_bodies == [
+        {
+            "symbol": "005930",
+            "side": "BUY",
+            "orderType": "LIMIT",
+            "quantity": "1",
+            "price": "70000",
+            "clientOrderId": "local-1",
+        }
+    ]
+    assert result == {"orderId": "order-abc", "clientOrderId": "local-1"}
+
+
+@pytest.mark.asyncio
+async def test_create_order_raises_duplicate_error_on_409() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        auth_resp = _auth_ok(request)
+        if auth_resp:
+            return auth_resp
+        return httpx.Response(409, json={"error": {"code": "duplicate-client-order-id", "message": "dup"}})
+
+    _client, rest = _client_and_rest(handler)
+
+    with pytest.raises(TossDuplicateOrderError):
+        await rest.create_order(
+            "SEQ-1", symbol="005930", side="BUY", order_type="LIMIT", quantity="1", price="70000"
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_order_uses_account_header_and_path() -> None:
+    seen_headers = {}
+    seen_paths = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        auth_resp = _auth_ok(request)
+        if auth_resp:
+            return auth_resp
+        seen_headers.update(dict(request.headers))
+        seen_paths.append(request.url.path)
+        return httpx.Response(200, json={"result": {"orderId": "order-abc", "status": "PENDING"}})
+
+    _client, rest = _client_and_rest(handler)
+    result = await rest.get_order("SEQ-1", "order-abc")
+
+    assert seen_headers["x-tossinvest-account"] == "SEQ-1"
+    assert seen_paths == ["/api/v1/orders/order-abc"]
+    assert result == {"orderId": "order-abc", "status": "PENDING"}
+
+
+@pytest.mark.asyncio
+async def test_modify_order_posts_to_modify_path() -> None:
+    seen_paths = []
+    seen_bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        auth_resp = _auth_ok(request)
+        if auth_resp:
+            return auth_resp
+        import json as _json
+
+        seen_paths.append(request.url.path)
+        seen_bodies.append(_json.loads(request.content))
+        return httpx.Response(200, json={"result": {"orderId": "order-new"}})
+
+    _client, rest = _client_and_rest(handler)
+    result = await rest.modify_order("SEQ-1", "order-abc", order_type="LIMIT", quantity="2", price="71000")
+
+    assert seen_paths == ["/api/v1/orders/order-abc/modify"]
+    assert seen_bodies == [{"orderType": "LIMIT", "quantity": "2", "price": "71000"}]
+    assert result == {"orderId": "order-new"}
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_posts_to_cancel_path_with_empty_body() -> None:
+    seen_paths = []
+    seen_bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        auth_resp = _auth_ok(request)
+        if auth_resp:
+            return auth_resp
+        import json as _json
+
+        seen_paths.append(request.url.path)
+        seen_bodies.append(_json.loads(request.content))
+        return httpx.Response(200, json={"result": {"orderId": "order-cancel"}})
+
+    _client, rest = _client_and_rest(handler)
+    result = await rest.cancel_order("SEQ-1", "order-abc")
+
+    assert seen_paths == ["/api/v1/orders/order-abc/cancel"]
+    assert seen_bodies == [{}]
+    assert result == {"orderId": "order-cancel"}
 
 
 # --- error handling ----------------------------------------------------------
