@@ -174,40 +174,49 @@ def write_daily_report(report: RunReport) -> Path:
     DAILY_DIR.mkdir(parents=True, exist_ok=True)
     path = DAILY_DIR / f"DAY{report.day:02d}.md"
 
-    lines = [
-        f"# Day {report.day} report",
-        "",
-        f"Requested phases: {', '.join(report.requested_phases)}",
-        f"Generated: {datetime.now(timezone.utc).isoformat()}",
-        f"Baseline gate: {'PASS' if report.baseline_passed else 'FAIL'}",
-        f"Phases completed this run: {', '.join(report.passed_phases) or '(none)'}",
-        f"Phases NOT completed this run: {', '.join(report.failed_phases) or '(none)'}",
-        "",
-        "## Baseline steps",
-        "",
-    ]
+    # Days are sometimes gated one phase at a time (e.g. reviewing P1 before
+    # starting P2) rather than in one run. Each run appends its own "## Run
+    # at <timestamp>" section instead of overwriting the file, so an earlier
+    # phase's detailed record survives a later run for the same day.
+    is_new_file = not path.exists()
+
+    lines = []
+    if is_new_file:
+        lines.append(f"# Day {report.day} report")
+        lines.append("")
+
+    lines.append(f"## Run at {datetime.now(timezone.utc).isoformat()}")
+    lines.append("")
+    lines.append(f"Requested phases: {', '.join(report.requested_phases)}")
+    lines.append(f"Baseline gate: {'PASS' if report.baseline_passed else 'FAIL'}")
+    lines.append(f"Phases completed this run: {', '.join(report.passed_phases) or '(none)'}")
+    lines.append(f"Phases NOT completed this run: {', '.join(report.failed_phases) or '(none)'}")
+    lines.append("")
+    lines.append("### Baseline steps")
+    lines.append("")
     for step in report.baseline_steps:
         status = "PASS" if step.passed else "FAIL"
-        lines.append(f"### {step.name} - {status}")
+        lines.append(f"#### {step.name} - {status}")
         if step.output.strip():
             lines.append("```")
             lines.append(step.output.strip()[:4000])
             lines.append("```")
         lines.append("")
 
-    lines.append("## Per-phase verification")
+    lines.append("### Per-phase verification")
     lines.append("")
     for phase in report.requested_phases:
         step = report.phase_steps[phase]
         status = "PASS" if step.passed else "FAIL"
-        lines.append(f"### {phase} - {status}")
+        lines.append(f"#### {phase} - {status}")
         if step.output.strip():
             lines.append("```")
             lines.append(step.output.strip()[:4000])
             lines.append("```")
         lines.append("")
 
-    path.write_text("\n".join(lines))
+    with path.open("a") as f:
+        f.write("\n".join(lines) + "\n")
     return path
 
 
