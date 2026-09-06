@@ -1,4 +1,4 @@
-"""SQLAlchemy ORM tables (P2).
+"""SQLAlchemy ORM tables (P2, extended in P12).
 
 Maps the P1 domain model onto persistent storage. Table names and grouping
 follow docs/MASTER_SPEC.md section P2 exactly:
@@ -12,6 +12,10 @@ time-series tables intended to be TimescaleDB hypertables (see
 migrations/versions for the `create_hypertable` call, which is skipped with a
 logged warning when the `timescaledb` extension isn't installed - e.g. on a
 plain Postgres dev instance - rather than failing the migration outright).
+
+`kakao_accounts` (P12) is the one table not in that original P2 list - it
+didn't exist until Kakao Login needed somewhere durable to keep OAuth tokens
+across restarts (see app/integrations/kakao/token_store.py).
 """
 
 from __future__ import annotations
@@ -245,3 +249,26 @@ class Performance(Base):
     unrealized_pnl: Mapped[float] = mapped_column(Float, default=0.0)
     win_count: Mapped[int] = mapped_column(Integer, default=0)
     loss_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class KakaoAccount(Base):
+    """One user's Kakao Login OAuth tokens (P12).
+
+    `user_id` is this application's own user identifier (the same value
+    `Approval.user_id` carries) - `kakao_user_id` is Kakao's own per-app
+    numeric id, kept separately since nothing guarantees the two schemes
+    ever coincide.
+    """
+
+    __tablename__ = "kakao_accounts"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String, unique=True, index=True)
+    kakao_user_id: Mapped[str] = mapped_column(String, unique=True, index=True)
+    access_token: Mapped[str] = mapped_column(Text)
+    refresh_token: Mapped[str] = mapped_column(Text)
+    access_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    refresh_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    talk_message_consent: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

@@ -53,6 +53,28 @@ class Settings(BaseSettings):
     upbit_ws_url: str = "wss://api.upbit.com/websocket/v1"
     upbit_rest_base_url: str = "https://api.upbit.com"
 
+    # Kakao Login + "send to me" notification (P12) - see docs/KAKAO_SETUP.md.
+    # `kakao_client_secret` is intentionally not required for `kakao_configured`:
+    # Kakao's client secret is an optional, separately-toggled setting for a
+    # REST API key, unlike KIS/Toss where the secret is mandatory.
+    kakao_client_id: str = ""
+    kakao_client_secret: str = ""
+    kakao_redirect_uri: str = ""
+    kakao_auth_base_url: str = "https://kauth.kakao.com"
+    kakao_api_base_url: str = "https://kapi.kakao.com"
+
+    @property
+    def kakao_configured(self) -> bool:
+        return bool(self.kakao_client_id and self.kakao_redirect_uri)
+
+    # Kakao's OAuth2 authorization_code grant needs a real user's browser
+    # consent - there is no client_credentials equivalent to automate it, so
+    # unlike KIS/Toss's app-only credentials, the real-connection integration
+    # test (test_kakao_integration.py) additionally needs a refresh token
+    # obtained once by hand through the real login flow. Solely for that
+    # test; the running application never reads this - see docs/KAKAO_SETUP.md.
+    kakao_test_refresh_token: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:
