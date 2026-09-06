@@ -3,14 +3,19 @@
 States mirror the crypto radar vocabulary docs/MASTER_SPEC.md defines in
 full for P9, since the breakout lifecycle they describe (accumulate, break,
 confirm, pull back or fail, distribute) is the same shape for either asset
-class - P9 will reuse this enum and add the crypto-only PUMP_RISK state
-rather than redefining the whole set.
+class - P9 reuses this enum rather than redefining the whole set.
 
-`AVOID` is intentionally not reachable from `next_state()` here: it is set
-by the risk engine (P18) overriding price-action signals entirely (e.g. a
-halted stock, a data-integrity failure), not something derivable from a
-single bar's price/volume/CLV - faking a price-based trigger for it here
-would be exactly the kind of unverified behavior the master spec forbids.
+`PUMP_RISK` is crypto-only: it's set by P9's `CryptoRadarStateTracker`
+(app/radar/crypto_state.py) from P8's `pump_risk_score`, not from this
+module's price/breakout_level/rvol/clv transition function - a stock radar
+has no notion of it, and `next_state()` here never returns it.
+
+`AVOID` is intentionally not reachable from `next_state()` here either: it
+is set by the risk engine (P18) overriding price-action signals entirely
+(e.g. a halted stock, a data-integrity failure), not something derivable
+from a single bar's price/volume/CLV - faking a price-based trigger for it
+here would be exactly the kind of unverified behavior the master spec
+forbids.
 """
 
 from __future__ import annotations
@@ -29,6 +34,7 @@ class RadarState(str, Enum):
     RE_ENTRY = "RE_ENTRY"
     DISTRIBUTION = "DISTRIBUTION"
     FAILED_BREAKOUT = "FAILED_BREAKOUT"
+    PUMP_RISK = "PUMP_RISK"
     AVOID = "AVOID"
 
 

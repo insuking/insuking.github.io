@@ -101,6 +101,7 @@ def test_score_rewards_relative_strength_and_regime() -> None:
         RadarState.DISTRIBUTION,
         RadarState.RE_ENTRY,
         RadarState.FAILED_BREAKOUT,
+        RadarState.PUMP_RISK,
         RadarState.AVOID,
     ],
 )

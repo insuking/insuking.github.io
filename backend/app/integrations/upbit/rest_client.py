@@ -1,6 +1,7 @@
-"""Upbit public REST client (P7): secondary price verification + candles.
+"""Upbit public REST client: secondary price verification + candles (P7),
+KRW market universe (P9).
 
-No API key needed. Two roles:
+No API key needed. Roles:
 
 1. `get_ticker_price` + `verify_price_consistency`: a periodic REST snapshot
    to cross-check against the WS feed's last price, catching a WS stream
@@ -11,6 +12,10 @@ No API key needed. Two roles:
    ("candle where appropriate" per docs/MASTER_SPEC.md P7 - it isn't
    appropriate over WS here, since Upbit doesn't offer one; REST is the
    real mechanism).
+3. `get_krw_market_universe` (P9): the full tradable KRW-* symbol list the
+   crypto radar ranks into TOP200/30/5 - see docs/UPBIT_NOTES.md for what
+   was and wasn't independently verified about this endpoint's response
+   shape.
 """
 
 from __future__ import annotations
@@ -26,6 +31,14 @@ from app.models.domain import Candle
 class UpbitRestClient:
     def __init__(self, client: httpx.AsyncClient) -> None:
         self._client = client
+
+    async def get_krw_market_universe(self) -> list[str]:
+        """All tradable `KRW-*` market symbols (verified via pyupbit's `get_tickers()`:
+        `GET /v1/market/all`, filtering the `market` field by prefix - see
+        docs/UPBIT_NOTES.md).
+        """
+        data = await self._get("/v1/market/all", params={"isDetails": "false"})
+        return [item["market"] for item in data if item["market"].startswith("KRW-")]
 
     async def get_ticker_price(self, market: str) -> float:
         data = await self._get("/v1/ticker", params={"markets": market})

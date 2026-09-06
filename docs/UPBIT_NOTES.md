@@ -26,6 +26,11 @@ open-source Upbit client) on GitHub:
   `orderbook_units[].{ask_price, bid_price, ask_size, bid_size}` - note the
   REST payload uses `market` for the symbol field, while everything below
   describes the **WebSocket** payload, which uses `code` instead.
+- `GET /v1/market/all` (P9's KRW universe): endpoint path, the `isDetails`
+  query param, and the `market` response field - via `pyupbit`'s
+  `get_tickers()`, which filters this same field by prefix
+  (`x['market'].startswith(fiat)`) exactly like
+  `UpbitRestClient.get_krw_market_universe()` does.
 
 **Not independently verified this way** (no reachable source showed a raw
 WS response payload) - these are long-stable, extremely widely-documented
