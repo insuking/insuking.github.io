@@ -22,6 +22,20 @@ class Settings(BaseSettings):
     trading_mode: str = "PAPER_APPROVAL"
     live_auto: bool = False
 
+    # KIS (Korea Investment Securities) Open API - see docs/KIS_SETUP.md.
+    # Left blank until the user provisions real credentials; every KIS
+    # integration must treat an empty key as "not configured" and refuse to
+    # pretend a connection succeeded (docs/MASTER_SPEC.md P3 acceptance).
+    kis_app_key: str = ""
+    kis_app_secret: str = ""
+    kis_account_no: str = ""
+    kis_rest_base_url: str = "https://openapi.koreainvestment.com:9443"
+    kis_ws_url: str = "wss://ops.koreainvestment.com:21000"
+
+    @property
+    def kis_configured(self) -> bool:
+        return bool(self.kis_app_key and self.kis_app_secret)
+
 
 @lru_cache
 def get_settings() -> Settings:
