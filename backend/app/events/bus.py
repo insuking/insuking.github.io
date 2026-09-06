@@ -43,10 +43,21 @@ async def publish(stream: Stream, payload: dict[str, Any]) -> str:
     return cast(str, entry_id)
 
 
-async def read_range(stream: Stream, count: int | None = None) -> list[RedisEvent]:
-    """Read all (or up to `count`) entries currently on the stream, oldest first."""
+async def read_range(
+    stream: Stream, count: int | None = None, start: str = "-"
+) -> list[RedisEvent]:
+    """Read entries from `start` (oldest by default) onward, up to `count`.
+
+    On a long-lived stream, `count` alone counts from the very beginning of
+    history - a small `count` can silently never reach anything published
+    recently. Pass `start=<an entry_id from publish()>` to scope a read to
+    "this entry and whatever comes after", independent of how much history
+    the stream has accumulated.
+    """
     redis = get_redis()
-    entries = cast(list[tuple[str, dict[str, str]]], await redis.xrange(stream.value, count=count))
+    entries = cast(
+        list[tuple[str, dict[str, str]]], await redis.xrange(stream.value, min=start, count=count)
+    )
     return [(entry_id, _decode(fields)) for entry_id, fields in entries]
 
 

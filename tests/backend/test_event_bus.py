@@ -20,13 +20,22 @@ pytestmark = pytest.mark.P2
 
 @pytest.mark.asyncio
 async def test_publish_then_read_range_round_trips_payload() -> None:
+    """Regression note: this must scope the read to `start=entry_id`, not a
+    bare `count`. This test's stream is shared across every run of this
+    suite ever executed against this Redis instance, so a plain
+    `read_range(stream, count=N)` reads the *oldest* N entries in the
+    stream's entire history - on a stream old enough, that no longer
+    includes anything just published, and this test starts failing for a
+    reason that has nothing to do with a real bug (see the same class of
+    issue fixed for `ensure_group` in app/events/bus.py).
+    """
     stream = Stream.MARKET_TRADE
     payload = {"symbol": "KRW-XRP", "price": 4100.5, "quantity": 12.0, "nonce": str(uuid.uuid4())}
 
     entry_id = await publish(stream, payload)
     assert entry_id
 
-    entries = await read_range(stream, count=50)
+    entries = await read_range(stream, start=entry_id)
     matching = [data for _id, data in entries if data.get("nonce") == payload["nonce"]]
     assert matching == [payload]
 
