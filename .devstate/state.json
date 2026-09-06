@@ -7,9 +7,10 @@
     "P3",
     "P4",
     "P5",
-    "P6"
+    "P6",
+    "P7"
   ],
-  "active_phase": "P7",
+  "active_phase": "P8",
   "blocked": false,
   "last_verified_commit": "092e464715c6f9826f10cf551c4a5f5c5590fb57",
   "last_test_result": "PASS"

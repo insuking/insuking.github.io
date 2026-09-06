@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     def toss_configured(self) -> bool:
         return bool(self.toss_client_id and self.toss_client_secret)
 
+    # Upbit public market data (P7) - ticker/trade/orderbook/candles need no
+    # API key at all. UPBIT_ACCESS_KEY/UPBIT_SECRET_KEY (added to
+    # .env.example on Day 0) are for later, authenticated phases (account
+    # balance, order placement) and are not read by this phase.
+    upbit_ws_url: str = "wss://api.upbit.com/websocket/v1"
+    upbit_rest_base_url: str = "https://api.upbit.com"
+
 
 @lru_cache
 def get_settings() -> Settings:
