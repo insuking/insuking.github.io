@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -31,7 +31,7 @@ from app.models.domain import (
 
 pytestmark = pytest.mark.P1
 
-NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
+NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def test_quote_round_trips_through_json() -> None:
@@ -78,7 +78,7 @@ def test_quote_rejects_unknown_fields() -> None:
             volume=1.0,
             exchange_ts=NOW,
             received_ts=NOW,
-            unexpected_field="nope",
+            unexpected_field="nope",  # type: ignore[call-arg]  # intentional: asserts rejection
         )
 
 
@@ -194,7 +194,7 @@ def test_approval_state_transitions_are_enum_constrained() -> None:
             id="appr-1",
             recommendation_id="rec-1",
             user_id="user-1",
-            state="NOT_A_REAL_STATE",
+            state="NOT_A_REAL_STATE",  # type: ignore[arg-type]  # intentional: asserts rejection
             token_hash="deadbeef",
             created_at=NOW,
             expires_at=NOW,

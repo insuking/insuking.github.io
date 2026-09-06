@@ -137,10 +137,13 @@ def run_baseline_gate() -> list[StepResult]:
     frontend_dir = REPO_ROOT / "frontend"
     python = backend_python()
 
+    # "." only covers backend/ - tests/backend lives one level up (P0's
+    # top-level tests/ layout) and ruff/mypy won't walk out of cwd on their
+    # own, so it must be passed explicitly or it silently goes unchecked.
     steps = []
-    ok, out = run([python, "-m", "ruff", "check", "."], backend_dir)
+    ok, out = run([python, "-m", "ruff", "check", ".", "../tests/backend"], backend_dir)
     steps.append(StepResult("backend: ruff", ok, out))
-    ok, out = run([python, "-m", "mypy", "app"], backend_dir)
+    ok, out = run([python, "-m", "mypy", "app", "../tests/backend"], backend_dir)
     steps.append(StepResult("backend: mypy", ok, out))
     ok, out = run([python, "-m", "pytest", "-q"], backend_dir)
     steps.append(StepResult("backend: full pytest suite", ok, out))
