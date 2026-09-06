@@ -1,0 +1,136 @@
+.approval-page {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.approval-page__notice {
+  text-align: center;
+  color: #6b7280;
+  padding: 24px 0;
+}
+
+.approval-page__notice--error {
+  color: #b42318;
+}
+
+.approval-page__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.approval-page__symbol {
+  font-weight: 700;
+  font-size: 1.2rem;
+}
+
+.approval-page__badge {
+  font-size: 0.8rem;
+  color: #2f5fff;
+  background: #eaefff;
+  padding: 2px 10px;
+  border-radius: 999px;
+}
+
+.approval-page__countdown {
+  font-size: 0.85rem;
+  color: #a15c00;
+  margin: 0;
+}
+
+.approval-page__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  background: #fff;
+  border-radius: 12px;
+  padding: 14px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.approval-page__cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.approval-page__label {
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.approval-page__value {
+  font-weight: 600;
+}
+
+.approval-page__details {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  font-size: 0.85rem;
+  background: #f7f8fb;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.approval-page__details-title {
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.approval-page__details ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.approval-page__pin-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #f7f8fb;
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.approval-page__input {
+  min-height: 44px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  padding: 0 12px;
+  font-size: 1rem;
+}
+
+.approval-page__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.approval-page__cta {
+  min-height: 48px;
+  border: none;
+  border-radius: 10px;
+  background: #eef0f4;
+  color: #1f2937;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.approval-page__cta--primary {
+  background: #2f5fff;
+  color: white;
+}
+
+.approval-page__cta--danger {
+  background: #fdecea;
+  color: #b42318;
+}
+
+.approval-page__cta:disabled {
+  background: #e5e7eb;
+  color: #9ca3af;
+}

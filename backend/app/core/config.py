@@ -75,6 +75,22 @@ class Settings(BaseSettings):
     # test; the running application never reads this - see docs/KAKAO_SETUP.md.
     kakao_test_refresh_token: str = ""
 
+    # Secure approval UX (P13) - see docs/MASTER_SPEC.md sections C-E.
+    # 120-300s window per the master spec; 180s is the midpoint default.
+    approval_token_ttl_seconds: int = 180
+    # PBKDF2-HMAC-SHA256 hash of the app PIN, as "<salt_hex>$<hash_hex>" (see
+    # app/approval/pin.py's hash_pin()) - never the plaintext PIN. Empty
+    # means "not configured", which fails approval closed (PinNotConfiguredError)
+    # rather than silently skipping the re-check the master spec requires.
+    app_pin_hash: str = ""
+    # Base URL the approval link sent via Kakao points to, e.g.
+    # "https://app.example.com" -> "https://app.example.com/approve/{token}".
+    approval_base_url: str = "http://localhost:5173"
+
+    @property
+    def pin_configured(self) -> bool:
+        return bool(self.app_pin_hash)
+
 
 @lru_cache
 def get_settings() -> Settings:

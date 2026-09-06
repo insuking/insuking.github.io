@@ -1,8 +1,31 @@
 import { useEffect, useState } from "react";
 import { fetchReadiness } from "./api/client";
+import { ApprovalPage } from "./components/ApprovalPage";
 import { RecommendationCard } from "./components/RecommendationCard";
 import type { Recommendation } from "./types/domain";
 import "./App.css";
+
+// No router dependency yet - a single mobile deep-link path
+// (/approve/:token, from the Kakao "send to me" message, see
+// app/approval/service.py's notify()) is the only route besides the home
+// screen, so a plain pathname match covers it without pulling in
+// react-router for one case.
+function matchApprovalRoute(pathname: string): string | null {
+  const match = /^\/approve\/([^/]+)$/.exec(pathname);
+  return match ? match[1] : null;
+}
+
+// The frontend has no Kakao login UI yet (P12 built the backend OAuth flow
+// only) - once a real login redirect lands, it should store the
+// authenticated user's id here. Until then this is the honestly-documented
+// gap: ApprovalPage shows "카카오 로그인이 필요합니다" when it's absent.
+function currentUserId(): string | null {
+  try {
+    return localStorage.getItem("userId");
+  } catch {
+    return null;
+  }
+}
 
 type SystemStatus = "checking" | "정상" | "점검필요";
 
@@ -38,6 +61,7 @@ const SAMPLE_RECOMMENDATION: Recommendation = {
 
 function App() {
   const [systemStatus, setSystemStatus] = useState<SystemStatus>("checking");
+  const approvalToken = matchApprovalRoute(window.location.pathname);
 
   useEffect(() => {
     let cancelled = false;
@@ -54,6 +78,10 @@ function App() {
       cancelled = true;
     };
   }, []);
+
+  if (approvalToken) {
+    return <ApprovalPage token={approvalToken} userId={currentUserId()} />;
+  }
 
   return (
     <main className="app-shell">

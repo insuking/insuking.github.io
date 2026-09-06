@@ -1,4 +1,4 @@
-"""SQLAlchemy ORM tables (P2, extended in P12).
+"""SQLAlchemy ORM tables (P2, extended in P12/P13).
 
 Maps the P1 domain model onto persistent storage. Table names and grouping
 follow docs/MASTER_SPEC.md section P2 exactly:
@@ -13,9 +13,11 @@ migrations/versions for the `create_hypertable` call, which is skipped with a
 logged warning when the `timescaledb` extension isn't installed - e.g. on a
 plain Postgres dev instance - rather than failing the migration outright).
 
-`kakao_accounts` (P12) is the one table not in that original P2 list - it
-didn't exist until Kakao Login needed somewhere durable to keep OAuth tokens
-across restarts (see app/integrations/kakao/token_store.py).
+Two tables sit outside that original P2 list, added when a later phase
+needed somewhere durable that P2 didn't anticipate: `kakao_accounts` (P12,
+OAuth tokens - see app/integrations/kakao/token_store.py) and
+`approval_events` (P13, the audit trail docs/MASTER_SPEC.md section E
+requires for every approval state transition - see app/approval/service.py).
 """
 
 from __future__ import annotations
@@ -272,3 +274,24 @@ class KakaoAccount(Base):
     talk_message_consent: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ApprovalEvent(Base):
+    """One state transition (or a non-terminal decision like HOLD) in an
+    approval's lifecycle (P13) - docs/MASTER_SPEC.md section E requires this
+    audit trail. `from_state` is null for the row created alongside the
+    approval itself (there is no prior state yet). `detail` is a JSON blob
+    (e.g. `{"override_amount": ...}` or `{"reasons": [...]}` from P14's
+    revalidation) - free-form because what's worth recording differs by
+    transition, not a fixed schema.
+    """
+
+    __tablename__ = "approval_events"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    approval_id: Mapped[str] = mapped_column(String, ForeignKey("approvals.id"), index=True)
+    from_state: Mapped[str | None] = mapped_column(String, nullable=True)
+    to_state: Mapped[str] = mapped_column(String)
+    actor: Mapped[str] = mapped_column(String)  # a user_id, or "system"
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
