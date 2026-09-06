@@ -94,3 +94,91 @@ dist/assets/index-BAlOWFri.js   192.05 kB │ gzip: 60.63 kB
 20 passed, 2 skipped, 34 deselected, 2 warnings in 5.36s
 ```
 
+## Run at 2026-09-06T12:31:54.176609+00:00
+
+Requested phases: P4
+Baseline gate: PASS
+Phases completed this run: P4
+Phases NOT completed this run: (none)
+
+### Baseline steps
+
+#### git status - PASS
+```
+?? backend/app/radar/
+?? tests/backend/test_radar_features.py
+?? tests/backend/test_radar_ranking.py
+?? tests/backend/test_radar_regime.py
+?? tests/backend/test_radar_state_machine.py
+```
+
+#### backup branch backup/day02-20260906T123138Z - PASS
+
+#### backend: ruff - PASS
+```
+All checks passed!
+```
+
+#### backend: mypy - PASS
+```
+Success: no issues found in 46 source files
+```
+
+#### backend: full pytest suite - PASS
+```
+....................................ss.................................. [ 81%]
+................                                                         [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.11/site-packages/fastapi/testclient.py:1
+  /home/user/insuking.github.io/backend/.venv/lib/python3.11/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+.venv/lib/python3.11/site-packages/starlette/testclient.py:53
+  /home/user/insuking.github.io/backend/.venv/lib/python3.11/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+86 passed, 2 skipped, 2 warnings in 11.60s
+```
+
+#### frontend: lint - PASS
+```
+> frontend@0.0.0 lint
+> oxlint
+```
+
+#### frontend: build - PASS
+```
+> frontend@0.0.0 build
+> tsc -b && vite build
+
+vite v8.2.2 building client environment for production...
+transforming...
+✓ 18 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.46 kB │ gzip:  0.30 kB
+dist/assets/index-CpVaa3eY.css    0.98 kB │ gzip:  0.50 kB
+dist/assets/index-BAlOWFri.js   192.05 kB │ gzip: 60.63 kB
+
+✓ built in 309ms
+```
+
+### Per-phase verification
+
+#### P4 - PASS
+```
+................................                                         [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.11/site-packages/fastapi/testclient.py:1
+  /home/user/insuking.github.io/backend/.venv/lib/python3.11/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+.venv/lib/python3.11/site-packages/starlette/testclient.py:53
+  /home/user/insuking.github.io/backend/.venv/lib/python3.11/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+32 passed, 56 deselected, 2 warnings in 0.28s
+```
+
