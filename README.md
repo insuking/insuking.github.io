@@ -78,6 +78,30 @@ Safe to re-run - every row it writes is prefixed `demo-` and gets replaced,
 never duplicated, on each run. It never touches a real broker/exchange.
 `LIVE_TRADING` stays `false` regardless.
 
+### Real crypto recommendations (Upbit)
+
+Upbit's public market data needs no API key, so this stack can scan the
+**real** KRW crypto market and produce real recommendations (stock
+recommendations are still blocked on real KIS credentials - see
+`docs/KIS_SETUP.md`):
+
+```bash
+docker compose exec backend python scripts/scan_crypto.py
+```
+
+Fetches the live KRW market from Upbit, ranks it by liquidity then by the
+same breakout/volume/relative-strength signals used everywhere else in this
+project, and saves up to 5 real recommendations (fewer, or zero, in a quiet
+market - never padded to hit a count). Safe to re-run - it replaces its own
+`scan-crypto-` rows each time.
+
+Pass your real buying power (KRW) with `-e` for accurate position sizing -
+without it the script prints a warning and falls back to a placeholder:
+
+```bash
+docker compose exec -e SCAN_ACCOUNT_BUYING_POWER=10000000 backend python scripts/scan_crypto.py
+```
+
 ## Development process
 
 This project is developed phase-by-phase (P0-P22) following the rules in the

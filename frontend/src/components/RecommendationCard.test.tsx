@@ -43,8 +43,8 @@ describe("RecommendationCard", () => {
     render(<RecommendationCard recommendation={buildRecommendation()} />);
 
     expect(screen.getByText("KRW-XRP")).toBeInTheDocument();
-    expect(screen.getByText("CONFIRMED_BREAKOUT")).toBeInTheDocument();
-    expect(screen.getByText("Score 92")).toBeInTheDocument();
+    expect(screen.getByText("돌파 확정")).toBeInTheDocument();
+    expect(screen.getByText("점수 92")).toBeInTheDocument();
     expect(screen.getByText(/₩4,080/)).toBeInTheDocument();
     expect(screen.getByText(/₩3,980/)).toBeInTheDocument();
     expect(screen.getByText("₩4,270")).toBeInTheDocument();

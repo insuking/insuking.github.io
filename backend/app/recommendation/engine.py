@@ -91,32 +91,32 @@ def score_recommendation(
 def _build_reasons(inputs: RecommendationInputs) -> list[str]:
     reasons = []
     if inputs.radar_state == RadarState.CONFIRMED_BREAKOUT:
-        reasons.append("Confirmed breakout above the opening range high")
+        reasons.append("시가 범위 고점 돌파 확정")
     elif inputs.radar_state == RadarState.BREAKOUT:
-        reasons.append("Fresh breakout above the opening range high")
+        reasons.append("시가 범위 고점 신규 돌파")
     elif inputs.radar_state == RadarState.PRE_BREAKOUT:
-        reasons.append("Approaching the opening range high on rising volume")
+        reasons.append("거래량 증가와 함께 시가 범위 고점에 근접")
     if inputs.rvol >= 2.0:
-        reasons.append(f"RVOL {inputs.rvol:.1f}x average volume")
+        reasons.append(f"평균 거래량 대비 {inputs.rvol:.1f}배 (RVOL)")
     if inputs.relative_strength_value > 0:
-        reasons.append(f"Outperforming the benchmark by {inputs.relative_strength_value * 100:.1f}%")
+        reasons.append(f"벤치마크 대비 {inputs.relative_strength_value * 100:.1f}% 초과 수익")
     if inputs.clv >= 0.3:
-        reasons.append("Closing strong near the session high")
+        reasons.append("고점 부근에서 강하게 마감")
     if inputs.regime == MarketRegime.RISK_ON:
-        reasons.append("Broad market regime is RISK_ON")
+        reasons.append("전체 시장 국면이 위험선호(RISK ON)")
     return reasons
 
 
 def _build_risks(inputs: RecommendationInputs) -> list[str]:
     risks = []
     if inputs.regime == MarketRegime.NEUTRAL:
-        risks.append("Market regime is NEUTRAL - mixed trend signal")
+        risks.append("시장 국면이 중립(NEUTRAL) - 추세 신호 혼조")
     if inputs.rvol < 1.5:
-        risks.append("Volume confirmation is modest")
+        risks.append("거래량 확인이 약함")
     if inputs.relative_strength_value < 0:
-        risks.append("Underperforming the benchmark")
+        risks.append("벤치마크 대비 저조한 수익률")
     if not risks:
-        risks.append("Standard breakout risk: the level can fail after triggering (failed breakout)")
+        risks.append("일반적인 돌파 리스크: 돌파 이후 되돌림(실패한 돌파) 가능성")
     return risks
 
 

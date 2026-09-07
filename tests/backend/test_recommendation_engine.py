@@ -162,10 +162,10 @@ def test_reasons_and_risks_are_populated() -> None:
 def test_low_volume_setup_is_flagged_as_a_risk() -> None:
     rec = build_recommendation(_inputs(rvol=1.1, relative_strength_value=0.02))
     assert rec is not None
-    assert any("volume" in r.lower() for r in rec.risks)
+    assert any("거래량" in r for r in rec.risks)
 
 
 def test_neutral_regime_recommendation_notes_the_regime_as_a_risk() -> None:
     rec = build_recommendation(_inputs(regime=MarketRegime.NEUTRAL))
     assert rec is not None
-    assert any("neutral" in r.lower() for r in rec.risks)
+    assert any("NEUTRAL" in r for r in rec.risks)

@@ -46,6 +46,16 @@ payload before depending on them for anything money-moving:
 - REST candle endpoint `GET /v1/candles/minutes/{unit}` fields:
   `market`, `candle_date_time_utc`, `opening_price`, `high_price`,
   `low_price`, `trade_price`, `candle_acc_trade_volume`.
+- REST `GET /v1/ticker` accepting a comma-separated `markets` list and
+  returning `acc_trade_price_24h` (24h accumulated trade *value*, not
+  volume) per market - used by `get_tickers_summary()` (app/scan/crypto_scan.py,
+  the market-wide scan's liquidity pre-filter). Same confidence level as
+  the other REST ticker fields above: long-documented Upbit convention,
+  not independently confirmed against a live response from this sandbox.
+- REST candle endpoint response order: **most-recent-bar-first**
+  (descending by time) - `crypto_scan.py` reverses this before handing
+  candles to any P4/P8 feature function, all of which assume ascending
+  (oldest-first) order.
 - Error envelope: `{"error": {"name": ..., "message": ...}}`.
 
 ## P15: authenticated order placement/cancel/status

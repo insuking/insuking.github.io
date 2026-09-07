@@ -14,6 +14,20 @@ function formatWon(value: number): string {
   return `₩${numberFormatter.format(Math.round(value))}`;
 }
 
+const STATE_LABEL: Record<string, string> = {
+  STEALTH: "관망",
+  ACCUMULATION: "매집",
+  PRE_BREAKOUT: "돌파 임박",
+  BREAKOUT: "돌파",
+  CONFIRMED_BREAKOUT: "돌파 확정",
+  PULLBACK: "눌림목",
+  RE_ENTRY: "재진입",
+  DISTRIBUTION: "분산",
+  FAILED_BREAKOUT: "돌파 실패",
+  PUMP_RISK: "급등 위험",
+  AVOID: "회피",
+};
+
 export function RecommendationCard({ recommendation, onApprove }: RecommendationCardProps) {
   const [expanded, setExpanded] = useState(false);
   const remainingSeconds = useCountdown(recommendation.expires_at);
@@ -28,9 +42,11 @@ export function RecommendationCard({ recommendation, onApprove }: Recommendation
       <header className="rec-card__header">
         <div>
           <span className="rec-card__symbol">{recommendation.symbol}</span>
-          <span className="rec-card__state">{recommendation.state}</span>
+          <span className="rec-card__state">
+            {STATE_LABEL[recommendation.state] ?? recommendation.state}
+          </span>
         </div>
-        <span className="rec-card__score">Score {Math.round(recommendation.score)}</span>
+        <span className="rec-card__score">점수 {Math.round(recommendation.score)}</span>
       </header>
 
       <div className="rec-card__grid">

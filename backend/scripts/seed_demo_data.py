@@ -66,10 +66,10 @@ async def seed() -> None:
                 expected_max_loss=9500.0,
                 risk_reward=2.1,
                 reasons=(
-                    '["Confirmed breakout above the opening range high", '
-                    '"RVOL 2.4x average volume", "Outperforming the benchmark by 3.2%"]'
+                    '["시가 범위 고점 돌파 확정", '
+                    '"평균 거래량 대비 2.4배 (RVOL)", "벤치마크 대비 3.2% 초과 수익"]'
                 ),
-                risks='["Standard breakout risk: the level can fail after triggering (failed breakout)"]',
+                risks='["일반적인 돌파 리스크: 돌파 이후 되돌림(실패한 돌파) 가능성"]',
                 created_at=now,
                 expires_at=now + timedelta(minutes=2, seconds=30),
             )
@@ -91,8 +91,8 @@ async def seed() -> None:
                 runner_percent=40.0,
                 expected_max_loss=120000.0,
                 risk_reward=1.8,
-                reasons='["Tightening range near opening high", "Sector relative strength positive"]',
-                risks='["Market regime NEUTRAL - lower conviction"]',
+                reasons='["시가 범위 고점 부근에서 좁혀지는 변동폭", "섹터 상대강도 양호"]',
+                risks='["시장 국면이 중립(NEUTRAL) - 확신도 낮음"]',
                 created_at=now,
                 expires_at=now + timedelta(minutes=4),
             )

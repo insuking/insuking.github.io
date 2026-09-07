@@ -58,6 +58,36 @@ async def test_get_candles_parses_into_domain_model() -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_tickers_summary_parses_multiple_markets() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/ticker"
+        assert request.url.params["markets"] == "KRW-BTC,KRW-ETH"
+        return httpx.Response(
+            200,
+            json=[
+                {"market": "KRW-BTC", "trade_price": 82_000_000.0, "acc_trade_price_24h": 1.5e11},
+                {"market": "KRW-ETH", "trade_price": 4_500_000.0, "acc_trade_price_24h": 8.0e10},
+            ],
+        )
+
+    rest = UpbitRestClient(_client_with(handler))
+    summaries = await rest.get_tickers_summary(["KRW-BTC", "KRW-ETH"])
+
+    assert [s.market for s in summaries] == ["KRW-BTC", "KRW-ETH"]
+    assert summaries[0].trade_price == 82_000_000.0
+    assert summaries[0].acc_trade_price_24h == 1.5e11
+
+
+@pytest.mark.asyncio
+async def test_get_tickers_summary_empty_markets_makes_no_request() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("should not make an HTTP request for an empty market list")
+
+    rest = UpbitRestClient(_client_with(handler))
+    assert await rest.get_tickers_summary([]) == []
+
+
+@pytest.mark.asyncio
 async def test_get_ticker_price_raises_on_error_envelope() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(

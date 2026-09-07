@@ -20,12 +20,20 @@ No API key needed. Roles:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import httpx
 
 from app.integrations.upbit.errors import UpbitApiError
 from app.models.domain import Candle
+
+
+@dataclass
+class TickerSummary:
+    market: str
+    trade_price: float
+    acc_trade_price_24h: float
 
 
 class UpbitRestClient:
@@ -43,6 +51,24 @@ class UpbitRestClient:
     async def get_ticker_price(self, market: str) -> float:
         data = await self._get("/v1/ticker", params={"markets": market})
         return float(data[0]["trade_price"])
+
+    async def get_tickers_summary(self, markets: list[str]) -> list[TickerSummary]:
+        """One batched snapshot (price + 24h accumulated trade value) across
+        many markets - `/v1/ticker` accepts a comma-separated `markets` list
+        in a single request. Used to rank the full KRW universe by liquidity
+        before spending a per-market `get_candles()` call on only the most
+        active ones (see app/scan/crypto_scan.py)."""
+        if not markets:
+            return []
+        data = await self._get("/v1/ticker", params={"markets": ",".join(markets)})
+        return [
+            TickerSummary(
+                market=item["market"],
+                trade_price=float(item["trade_price"]),
+                acc_trade_price_24h=float(item["acc_trade_price_24h"]),
+            )
+            for item in data
+        ]
 
     async def get_candles(self, market: str, unit_minutes: int = 1, count: int = 200) -> list[Candle]:
         data = await self._get(
