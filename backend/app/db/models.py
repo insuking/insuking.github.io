@@ -17,11 +17,17 @@ Three tables sit outside that original P2 list, added when a later phase
 needed somewhere durable that P2 didn't anticipate: `kakao_accounts` (P12,
 OAuth tokens - see app/integrations/kakao/token_store.py), `approval_events`
 (P13, the audit trail docs/MASTER_SPEC.md section E requires for every
-approval state transition - see app/approval/service.py), and
-`risk_states` (P18, an append-only log of `RiskState` snapshots - see
+approval state transition - see app/approval/service.py), `risk_states`
+(P18, an append-only log of `RiskState` snapshots - see
 app/risk/state_store.py - mirroring `system_health`'s append-log shape
 rather than a single mutable row, so a kill-switch trigger's history isn't
-overwritten by the next evaluation).
+overwritten by the next evaluation), and `paper_accounts`/
+`paper_positions`/`paper_orders`/`paper_fills` (P20 - see
+app/paper_trading/ledger.py). The paper-trading tables are deliberately
+separate from `orders`/`fills`/`positions` rather than reusing them with a
+"PAPER" broker tag: P16's Guardian and P18's risk engine read `positions`/
+`orders` directly, and a paper trade must never be visible to - or
+protected/blocked by - the logic that manages real money.
 """
 
 from __future__ import annotations
@@ -321,3 +327,69 @@ class RiskStateRow(Base):
     consecutive_stops: Mapped[int] = mapped_column(Integer)
     kill_switch_active: Mapped[bool] = mapped_column(Boolean, default=False)
     kill_switch_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class PaperAccount(Base):
+    """A simulated cash balance (P20) - one per broker sandbox
+    (`PAPER_TOSS`, `PAPER_UPBIT`), never shared with a real account.
+    """
+
+    __tablename__ = "paper_accounts"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # e.g. "PAPER_TOSS"
+    asset_type: Mapped[str] = mapped_column(String)
+    cash_balance: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class PaperPosition(Base):
+    """A simulated open position (P20), long-only like the real spot
+    accounts this project ever trades on."""
+
+    __tablename__ = "paper_positions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    account_id: Mapped[str] = mapped_column(String, ForeignKey("paper_accounts.id"), index=True)
+    symbol: Mapped[str] = mapped_column(String, index=True)
+    quantity: Mapped[float] = mapped_column(Float)
+    avg_entry_price: Mapped[float] = mapped_column(Float)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class PaperOrder(Base):
+    """A simulated order (P20) - mirrors `Order`'s shape so the paper and
+    real code paths stay easy to compare, without being the same table."""
+
+    __tablename__ = "paper_orders"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    account_id: Mapped[str] = mapped_column(String, ForeignKey("paper_accounts.id"), index=True)
+    symbol: Mapped[str] = mapped_column(String, index=True)
+    side: Mapped[str] = mapped_column(String)
+    order_type: Mapped[str] = mapped_column(String)
+    quantity: Mapped[float] = mapped_column(Float)
+    limit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String)
+    rejection_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class PaperFill(Base):
+    """A simulated fill (P20) - the realistic-cost record `orders`/`fills`
+    would carry for a real trade: quantity/price actually simulated
+    (spread + slippage already baked into `price`), plus commission and tax
+    broken out so PnL can be reconstructed and audited."""
+
+    __tablename__ = "paper_fills"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    order_id: Mapped[str] = mapped_column(String, ForeignKey("paper_orders.id"), index=True)
+    quantity: Mapped[float] = mapped_column(Float)
+    price: Mapped[float] = mapped_column(Float)
+    slippage_amount: Mapped[float] = mapped_column(Float)
+    commission: Mapped[float] = mapped_column(Float)
+    tax: Mapped[float] = mapped_column(Float)
+    latency_ms: Mapped[int] = mapped_column(Integer)
+    filled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
