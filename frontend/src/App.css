@@ -2,13 +2,19 @@
   max-width: 412px;
   margin: 0 auto;
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #1a1a2e;
+  background: #f7f8fb;
+}
+
+.page {
+  flex: 1;
   padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  color: #1a1a2e;
-  background: #f7f8fb;
 }
 
 .app-header {

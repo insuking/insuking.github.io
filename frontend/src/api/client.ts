@@ -1,4 +1,6 @@
+import type { CallbackResponse, LoginUrlResponse } from "../types/auth";
 import type { ApprovalDecisionType, ApprovalDetail, DecideResult } from "../types/approval";
+import type { DashboardPerformance, DashboardSummary, IncidentOut } from "../types/dashboard";
 import type { ReadinessResponse } from "../types/health";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
@@ -62,4 +64,48 @@ export async function decideApproval(
     throw new ApprovalApiError(response.status, await _readDetail(response));
   }
   return (await response.json()) as DecideResult;
+}
+
+export async function fetchDashboardSummary(): Promise<DashboardSummary> {
+  const response = await fetch(`${API_BASE_URL}/api/dashboard/summary`);
+  if (!response.ok) {
+    throw new ApprovalApiError(response.status, await _readDetail(response));
+  }
+  return (await response.json()) as DashboardSummary;
+}
+
+export async function fetchIncidents(): Promise<IncidentOut[]> {
+  const response = await fetch(`${API_BASE_URL}/api/dashboard/incidents`);
+  if (!response.ok) {
+    throw new ApprovalApiError(response.status, await _readDetail(response));
+  }
+  return (await response.json()) as IncidentOut[];
+}
+
+export async function fetchPerformance(): Promise<DashboardPerformance> {
+  const response = await fetch(`${API_BASE_URL}/api/dashboard/performance`);
+  if (!response.ok) {
+    throw new ApprovalApiError(response.status, await _readDetail(response));
+  }
+  return (await response.json()) as DashboardPerformance;
+}
+
+export async function fetchKakaoLoginUrl(): Promise<LoginUrlResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/auth/kakao/login-url`);
+  if (!response.ok) {
+    throw new ApprovalApiError(response.status, await _readDetail(response));
+  }
+  return (await response.json()) as LoginUrlResponse;
+}
+
+export async function submitKakaoCallback(code: string, state: string): Promise<CallbackResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/auth/kakao/callback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code, state }),
+  });
+  if (!response.ok) {
+    throw new ApprovalApiError(response.status, await _readDetail(response));
+  }
+  return (await response.json()) as CallbackResponse;
 }

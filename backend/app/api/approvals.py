@@ -4,15 +4,18 @@ Endpoints for the mobile approval page (frontend `/approve/:token` route):
 GET to view an approval's current detail, POST to record a decision. See
 docs/MASTER_SPEC.md sections C-E for the security model this maps onto.
 
-Auth model (documented limitation): "authenticated user" here means "holds
-a currently-valid Kakao Login session" - `KakaoTokenStore.get_valid_access_token`
-returns non-None for that user_id (see app/integrations/kakao/token_store.py).
-This reuses P12's real OAuth token store rather than inventing a parallel
-session system. The client identifies which user it is via the `X-User-Id`
-header. A full browser session/cookie layer (so the frontend doesn't need to
-already know its own user_id) is deferred to a later UX-hardening pass
-(P21) - this is the honestly-real authentication check available today, not
-a placeholder pretending to be more than it is.
+Auth model (documented choice, not a placeholder): "authenticated user"
+means "holds a currently-valid Kakao Login session" -
+`KakaoTokenStore.get_valid_access_token` returns non-None for that user_id
+(see app/integrations/kakao/token_store.py). This reuses P12's real OAuth
+token store rather than inventing a parallel session system. The client
+identifies which user it is via the `X-User-Id` header, sourced from
+`localStorage` on the frontend after a real Kakao login redirect
+(`app/api/auth.py`, P21) populates it - a server-side session/cookie layer
+was considered and deliberately not built instead, since it would replace
+this already-working design rather than complete it. Rate limiting on
+`decide()` (P21, `app/approval/rate_limit.py`) is what actually bounds PIN
+brute-forcing here, since nothing about the header itself is a secret.
 """
 
 from __future__ import annotations
@@ -33,7 +36,10 @@ from app.approval.errors import (
     PinIncorrectError,
     PinNotConfiguredError,
 )
+from app.approval.rate_limit import check_and_record_attempt
 from app.approval.service import ApprovalDecision, ApprovalService
+from app.core.config import get_settings
+from app.db.redis_client import get_redis
 from app.db.session import session_scope
 from app.integrations.kakao.auth import KakaoAuth
 from app.integrations.kakao.token_store import KakaoTokenStore
@@ -129,6 +135,16 @@ async def get_approval(token: str, x_user_id: str = Header(..., alias="X-User-Id
 async def decide_approval(
     token: str, body: DecideRequest, x_user_id: str = Header(..., alias="X-User-Id")
 ) -> DecideResponse:
+    settings = get_settings()
+    allowed = await check_and_record_attempt(
+        get_redis(),
+        token,
+        max_attempts=settings.approval_rate_limit_max_attempts,
+        window_seconds=settings.approval_rate_limit_window_seconds,
+    )
+    if not allowed:
+        raise HTTPException(status_code=429, detail="Too many attempts on this approval - try again shortly")
+
     async with session_scope() as session:
         try:
             await _require_authenticated(session, x_user_id)

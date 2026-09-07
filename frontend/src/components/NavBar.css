@@ -1,0 +1,29 @@
+.nav-bar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  background: #ffffff;
+  border-top: 1px solid #e5e7eb;
+  box-shadow: 0 -1px 4px rgba(0, 0, 0, 0.05);
+}
+
+.nav-bar__item {
+  flex: 1;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 6px 2px;
+  font-size: 0.78rem;
+  color: #6b7280;
+  text-decoration: none;
+  border-top: 2px solid transparent;
+}
+
+.nav-bar__item--active {
+  color: #1a1a2e;
+  font-weight: 700;
+  background: #eef1ff;
+  border-top: 2px solid #2f5fff;
+}

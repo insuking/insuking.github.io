@@ -99,6 +99,27 @@ class Settings(BaseSettings):
     def pin_configured(self) -> bool:
         return bool(self.app_pin_hash)
 
+    # Kakao Login flow (P21) - how long a `state` CSRF nonce issued by
+    # GET /api/auth/kakao/login-url stays redeemable by the callback.
+    kakao_oauth_state_ttl_seconds: int = 300
+
+    # Rate limiting (P21) - see app/approval/rate_limit.py. Applied to
+    # POST /api/approvals/{token}/decide, the natural PIN-brute-force
+    # target the Security section (docs/MASTER_SPEC.md) calls out.
+    approval_rate_limit_max_attempts: int = 5
+    approval_rate_limit_window_seconds: int = 60
+
+    # Home-screen market regime (P21, app/api/dashboard.py) - the `Candle`
+    # symbol this deployment treats as the KOSPI/KOSDAQ benchmark index for
+    # `app.radar.regime.classify_market_regime`. Unset by default: there is
+    # no established convention yet for which real KIS index code a live
+    # feed writer should tag index candles under, so this stays an honest
+    # "not configured" (market_regime reports null) rather than guessing
+    # one. The crypto side needs no equivalent setting - Upbit's own
+    # `KRW-BTC` market symbol (see app/integrations/upbit/rest_client.py)
+    # is unambiguous.
+    market_index_symbol: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:

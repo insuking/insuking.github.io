@@ -21,10 +21,11 @@
     "P17",
     "P18",
     "P19",
-    "P20"
+    "P20",
+    "P21"
   ],
-  "active_phase": "P21",
+  "active_phase": "P22",
   "blocked": false,
   "last_verified_commit": "c34e99a97ba863898ad7de8c992db245e7dfa67c",
-  "last_test_result": "PASS"
+  "last_test_result": "PARTIAL"
 }
