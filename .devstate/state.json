@@ -1,5 +1,5 @@
 {
-  "current_day": 8,
+  "current_day": 9,
   "completed_phases": [
     "P0",
     "P1",
@@ -17,9 +17,11 @@
     "P13",
     "P14",
     "P15",
-    "P16"
+    "P16",
+    "P17",
+    "P18"
   ],
-  "active_phase": "P17",
+  "active_phase": "P19",
   "blocked": false,
   "last_verified_commit": "5c287bad988ec09bab7b1ccbbe6886db0b94e126",
   "last_test_result": "PASS"

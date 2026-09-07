@@ -1,4 +1,4 @@
-"""SQLAlchemy ORM tables (P2, extended in P12/P13).
+"""SQLAlchemy ORM tables (P2, extended in P12/P13/P18).
 
 Maps the P1 domain model onto persistent storage. Table names and grouping
 follow docs/MASTER_SPEC.md section P2 exactly:
@@ -13,11 +13,15 @@ migrations/versions for the `create_hypertable` call, which is skipped with a
 logged warning when the `timescaledb` extension isn't installed - e.g. on a
 plain Postgres dev instance - rather than failing the migration outright).
 
-Two tables sit outside that original P2 list, added when a later phase
+Three tables sit outside that original P2 list, added when a later phase
 needed somewhere durable that P2 didn't anticipate: `kakao_accounts` (P12,
-OAuth tokens - see app/integrations/kakao/token_store.py) and
-`approval_events` (P13, the audit trail docs/MASTER_SPEC.md section E
-requires for every approval state transition - see app/approval/service.py).
+OAuth tokens - see app/integrations/kakao/token_store.py), `approval_events`
+(P13, the audit trail docs/MASTER_SPEC.md section E requires for every
+approval state transition - see app/approval/service.py), and
+`risk_states` (P18, an append-only log of `RiskState` snapshots - see
+app/risk/state_store.py - mirroring `system_health`'s append-log shape
+rather than a single mutable row, so a kill-switch trigger's history isn't
+overwritten by the next evaluation).
 """
 
 from __future__ import annotations
@@ -295,3 +299,25 @@ class ApprovalEvent(Base):
     actor: Mapped[str] = mapped_column(String)  # a user_id, or "system"
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class RiskStateRow(Base):
+    """One `RiskState` (P1) snapshot, as evaluated by P18's kill switch -
+    append-only, like `system_health`, so "current" means "latest by
+    `as_of`" and a triggered kill switch's history survives the next
+    evaluation rather than being overwritten in place.
+    """
+
+    __tablename__ = "risk_states"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    daily_loss: Mapped[float] = mapped_column(Float)
+    daily_loss_limit: Mapped[float] = mapped_column(Float)
+    exposure: Mapped[float] = mapped_column(Float)
+    exposure_limit: Mapped[float] = mapped_column(Float)
+    open_positions: Mapped[int] = mapped_column(Integer)
+    max_positions: Mapped[int] = mapped_column(Integer)
+    consecutive_stops: Mapped[int] = mapped_column(Integer)
+    kill_switch_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    kill_switch_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
