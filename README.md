@@ -62,6 +62,22 @@ Starts TimescaleDB (Postgres), Redis, the backend API (`:8000`), and the
 frontend (`:5173`). See `docs/daily/DAY00.md` for what has been verified so far
 and what is still environment-pending.
 
+Open `http://localhost:5173` once all four services report healthy
+(`docker compose ps`). With an empty database every screen honestly shows
+its empty state (no recommendations, no positions) rather than sample data
+- to see the UI with something in it, seed a small labeled demo dataset
+(one crypto and one stock recommendation, one open position, a risk
+snapshot, a resolved incident, and enough candles for the market-regime
+classifier to produce a real reading):
+
+```bash
+docker compose exec backend python scripts/seed_demo_data.py
+```
+
+Safe to re-run - every row it writes is prefixed `demo-` and gets replaced,
+never duplicated, on each run. It never touches a real broker/exchange.
+`LIVE_TRADING` stays `false` regardless.
+
 ## Development process
 
 This project is developed phase-by-phase (P0-P22) following the rules in the
