@@ -104,6 +104,60 @@ async def test_get_ticker_price_raises_on_error_envelope() -> None:
     assert exc_info.value.message == "no such market"
 
 
+@pytest.mark.asyncio
+async def test_get_retries_a_429_and_succeeds() -> None:
+    """A real scan against Upbit's real market once tripped exactly this
+    (429 from firing get_candles() for many markets too fast) - see
+    docs/UPBIT_NOTES.md. The retry must not surface the 429 as a hard
+    failure when a later attempt succeeds."""
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            return httpx.Response(429, json={"error": {"name": "too_many_requests"}})
+        return httpx.Response(200, json=[{"market": "KRW-BTC", "trade_price": 71000000.0}])
+
+    rest = UpbitRestClient(_client_with(handler), rate_limit_backoff_seconds=0.01)
+    price = await rest.get_ticker_price("KRW-BTC")
+
+    assert price == 71000000.0
+    assert calls == 3
+
+
+@pytest.mark.asyncio
+async def test_get_raises_after_exhausting_429_retries() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, json={"error": {"name": "too_many_requests"}})
+
+    rest = UpbitRestClient(_client_with(handler), rate_limit_backoff_seconds=0.01)
+
+    with pytest.raises(UpbitApiError) as exc_info:
+        await rest.get_ticker_price("KRW-BTC")
+
+    assert exc_info.value.status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_throttle_paces_concurrent_requests_under_the_configured_rate() -> None:
+    import asyncio
+    import time
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"market": "KRW-BTC", "trade_price": 1.0}])
+
+    rest = UpbitRestClient(_client_with(handler), max_requests_per_second=20.0)
+
+    start = time.monotonic()
+    await asyncio.gather(*(rest.get_ticker_price("KRW-BTC") for _ in range(5)))
+    elapsed = time.monotonic() - start
+
+    # 5 requests at 20/sec must take at least 4 intervals (0.2s) - a bug that
+    # skipped throttling for concurrent callers would finish near-instantly.
+    assert elapsed >= 0.19
+
+
 def test_verify_price_consistency_within_tolerance() -> None:
     assert verify_price_consistency(ws_price=100.0, rest_price=101.0, max_deviation=0.02) is True
 

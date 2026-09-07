@@ -20,6 +20,7 @@ No API key needed. Roles:
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -27,6 +28,18 @@ import httpx
 
 from app.integrations.upbit.errors import UpbitApiError
 from app.models.domain import Candle
+
+# Upbit's public quotation API is commonly documented (pyupbit, community
+# docs) as capped around 10 requests/second per IP - docs.upbit.com itself
+# is blocked from this sandbox (see docs/UPBIT_NOTES.md), so that exact
+# number isn't independently verified here. This default stays under it
+# with margin; a 429 that slips through anyway (e.g. another process
+# sharing the same IP) is retried with backoff rather than surfaced as a
+# hard failure - see docs/UPBIT_NOTES.md for the real-world scan that first
+# tripped this.
+DEFAULT_MAX_REQUESTS_PER_SECOND = 8.0
+DEFAULT_RATE_LIMIT_BACKOFF_SECONDS = 0.5
+_MAX_RATE_LIMIT_RETRIES = 3
 
 
 @dataclass
@@ -37,8 +50,17 @@ class TickerSummary:
 
 
 class UpbitRestClient:
-    def __init__(self, client: httpx.AsyncClient) -> None:
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        max_requests_per_second: float = DEFAULT_MAX_REQUESTS_PER_SECOND,
+        rate_limit_backoff_seconds: float = DEFAULT_RATE_LIMIT_BACKOFF_SECONDS,
+    ) -> None:
         self._client = client
+        self._min_request_interval = 1.0 / max_requests_per_second
+        self._rate_limit_backoff_seconds = rate_limit_backoff_seconds
+        self._throttle_lock = asyncio.Lock()
+        self._next_allowed_at = 0.0
 
     async def get_krw_market_universe(self) -> list[str]:
         """All tradable `KRW-*` market symbols (verified via pyupbit's `get_tickers()`:
@@ -90,8 +112,31 @@ class UpbitRestClient:
             close_time=open_time + timedelta(minutes=unit_minutes),
         )
 
+    async def _throttle(self) -> None:
+        """Pace outgoing requests to at most `max_requests_per_second`,
+        regardless of how many callers are dispatching concurrently -
+        `app/scan/crypto_scan.py` fans out many `get_candles()` calls at
+        once, and this is what keeps that fan-out under Upbit's real rate
+        limit instead of tripping a 429 immediately."""
+        async with self._throttle_lock:
+            now = asyncio.get_event_loop().time()
+            wait = self._next_allowed_at - now
+            if wait > 0:
+                await asyncio.sleep(wait)
+                now = self._next_allowed_at
+            self._next_allowed_at = max(now, self._next_allowed_at) + self._min_request_interval
+
     async def _get(self, path: str, params: dict[str, str | int] | None = None) -> list[dict]:
-        response = await self._client.get(path, params=params)
+        response: httpx.Response | None = None
+        for attempt in range(_MAX_RATE_LIMIT_RETRIES + 1):
+            await self._throttle()
+            response = await self._client.get(path, params=params)
+            if response.status_code == 429 and attempt < _MAX_RATE_LIMIT_RETRIES:
+                await asyncio.sleep(self._rate_limit_backoff_seconds * (attempt + 1))
+                continue
+            break
+        assert response is not None  # loop always runs at least once
+
         if response.is_error:
             try:
                 body = response.json()
