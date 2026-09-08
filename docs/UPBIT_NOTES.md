@@ -56,7 +56,20 @@ payload before depending on them for anything money-moving:
   (descending by time) - `crypto_scan.py` reverses this before handing
   candles to any P4/P8 feature function, all of which assume ascending
   (oldest-first) order.
+- REST `GET /v1/candles/days` (used by `get_daily_candles()` for
+  `crypto_backtest.py`/`scripts/backtest_crypto.py`'s longer history):
+  same field names and most-recent-first order as the minute endpoint
+  above, per the same long-documented-but-not-independently-verified
+  convention.
 - Error envelope: `{"error": {"name": ..., "message": ...}}`.
+- **Rate limit**: a real docker-compose run against the live API (the
+  first real connection this project ever verified - see "Re-verifying"
+  below) tripped a 429 almost immediately once `crypto_scan.py` fanned out
+  concurrent `get_candles()` calls with nothing pacing them.
+  `UpbitRestClient` now throttles every request to a configurable
+  `max_requests_per_second` (default 8, chosen with margin under the
+  commonly-cited-but-unverified "10 req/s" figure) and retries a 429 with
+  backoff - see `rest_client.py`'s module-level constants.
 
 ## P15: authenticated order placement/cancel/status
 

@@ -102,6 +102,41 @@ without it the script prints a warning and falls back to a placeholder:
 docker compose exec -e SCAN_ACCOUNT_BUYING_POWER=10000000 backend python scripts/scan_crypto.py
 ```
 
+### Backtest the strategy, then auto-paper-trade it (Upbit)
+
+Two more scripts, meant to be run in this order:
+
+**1. Backtest** - replays the exact same recommendation strategy over each
+market's real historical daily candles, so you can see whether it would
+have made money before trusting it with even paper money:
+
+```bash
+docker compose exec backend python scripts/backtest_crypto.py
+```
+
+Prints per-market trade count, win rate, and compounded return. Read-only -
+writes nothing to the database. Fees/slippage are not modeled (see
+`app/scan/crypto_backtest.py`'s module docstring), so treat this as a
+signal-quality check, not a net-PnL forecast.
+
+**2. Auto paper trading** - runs the real crypto scan and automatically
+places simulated (never real) trades from it, using the *same* stop/target
+exit rule the backtest just validated:
+
+```bash
+docker compose exec backend python scripts/paper_trade_crypto.py
+```
+
+Safe to re-run repeatedly (e.g. on a schedule) - each run first closes any
+open paper position that has hit its stop or target, then opens a paper
+position for every fresh Top-5 recommendation not already held. Never
+touches a real broker/exchange or the real `positions`/`orders` tables,
+and never needs approval - this is explicitly simulated money.
+`SCAN_ACCOUNT_BUYING_POWER` sets the paper account's starting cash on its
+first-ever run only; after that its own simulated cash balance is used.
+`PAPER_TRADE_ACCOUNT_ID` picks which paper account to run against if you
+want more than one.
+
 ## Development process
 
 This project is developed phase-by-phase (P0-P22) following the rules in the

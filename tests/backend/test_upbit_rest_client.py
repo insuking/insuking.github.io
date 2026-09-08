@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 import httpx
 import pytest
 
@@ -55,6 +57,37 @@ async def test_get_candles_parses_into_domain_model() -> None:
     assert candle.open == 100.0
     assert candle.close == 105.0
     assert candle.volume == 12.5
+
+
+@pytest.mark.asyncio
+async def test_get_daily_candles_parses_into_domain_model() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/candles/days"
+        assert request.url.params["market"] == "KRW-BTC"
+        assert request.url.params["count"] == "5"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "market": "KRW-BTC",
+                    "candle_date_time_utc": "2026-01-05T00:00:00",
+                    "opening_price": 80_000_000.0,
+                    "high_price": 82_000_000.0,
+                    "low_price": 79_000_000.0,
+                    "trade_price": 81_000_000.0,
+                    "candle_acc_trade_volume": 120.0,
+                }
+            ],
+        )
+
+    rest = UpbitRestClient(_client_with(handler))
+    candles = await rest.get_daily_candles("KRW-BTC", count=5)
+
+    assert len(candles) == 1
+    candle = candles[0]
+    assert candle.interval == "1d"
+    assert candle.close == 81_000_000.0
+    assert candle.close_time - candle.open_time == timedelta(days=1)
 
 
 @pytest.mark.asyncio

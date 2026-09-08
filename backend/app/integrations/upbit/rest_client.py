@@ -96,20 +96,31 @@ class UpbitRestClient:
         data = await self._get(
             f"/v1/candles/minutes/{unit_minutes}", params={"market": market, "count": count}
         )
-        return [self._to_candle(item, market, unit_minutes) for item in data]
+        return [self._to_candle(item, market, timedelta(minutes=unit_minutes), f"{unit_minutes}m") for item in data]
 
-    def _to_candle(self, item: dict, market: str, unit_minutes: int) -> Candle:
+    async def get_daily_candles(self, market: str, count: int = 200) -> list[Candle]:
+        """Daily candles (`GET /v1/candles/days`) - a far longer, more
+        backtest-useful history than `get_candles()`'s minute bars can reach
+        in one call (Upbit caps every candle endpoint at `count<=200` per
+        request; 200 minutes is ~3 hours, 200 days is most of a year). Used
+        by `app/scan/crypto_backtest.py` rather than minute bars for that
+        reason - see docs/UPBIT_NOTES.md for the same "not independently
+        verified, long-documented convention" caveat as `get_candles()`."""
+        data = await self._get("/v1/candles/days", params={"market": market, "count": count})
+        return [self._to_candle(item, market, timedelta(days=1), "1d") for item in data]
+
+    def _to_candle(self, item: dict, market: str, bar_length: timedelta, interval: str) -> Candle:
         open_time = datetime.fromisoformat(item["candle_date_time_utc"]).replace(tzinfo=UTC)
         return Candle(
             symbol=market,
-            interval=f"{unit_minutes}m",
+            interval=interval,
             open=float(item["opening_price"]),
             high=float(item["high_price"]),
             low=float(item["low_price"]),
             close=float(item["trade_price"]),
             volume=float(item["candle_acc_trade_volume"]),
             open_time=open_time,
-            close_time=open_time + timedelta(minutes=unit_minutes),
+            close_time=open_time + bar_length,
         )
 
     async def _throttle(self) -> None:

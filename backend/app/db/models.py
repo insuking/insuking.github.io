@@ -345,7 +345,13 @@ class PaperAccount(Base):
 
 class PaperPosition(Base):
     """A simulated open position (P20), long-only like the real spot
-    accounts this project ever trades on."""
+    accounts this project ever trades on.
+
+    `stop_price`/`t2_price` (P24) are nullable because P20's own
+    ledger-driven positions never set them - only
+    `app/scan/auto_paper_trade.py` does, to remember the exit plan a
+    recommendation implied so a later run can decide whether to close the
+    position, without needing a separate table for two numbers."""
 
     __tablename__ = "paper_positions"
 
@@ -354,6 +360,8 @@ class PaperPosition(Base):
     symbol: Mapped[str] = mapped_column(String, index=True)
     quantity: Mapped[float] = mapped_column(Float)
     avg_entry_price: Mapped[float] = mapped_column(Float)
+    stop_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    t2_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
