@@ -35,7 +35,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -401,3 +401,99 @@ class PaperFill(Base):
     tax: Mapped[float] = mapped_column(Float)
     latency_ms: Mapped[int] = mapped_column(Integer)
     filled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SecurityRow(Base):
+    """KRX securities master (P23) - screening metadata daily OHLCV alone
+    can't carry (sector, market cap, halt/management-issue/ETF flags).
+    Keyed by `symbol` rather than a synthetic id, matching every other
+    table in this file (`candles`, `recommendations`, `positions`, ...) -
+    nothing else here joins through a numeric foreign key, so this
+    doesn't either. Daily stock OHLCV itself reuses the existing `candles`
+    table (`interval="1d"`) rather than a separate `daily_prices` table -
+    same shape, no reason to duplicate it."""
+
+    __tablename__ = "securities"
+
+    symbol: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String)
+    market: Mapped[str] = mapped_column(String)  # KOSPI | KOSDAQ
+    sector_code: Mapped[str | None] = mapped_column(String, nullable=True)
+    sector_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    market_cap: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    shares_outstanding: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    is_etf: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_etn: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_spac: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_preferred: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_trading_halt: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_management_issue: Mapped[bool] = mapped_column(Boolean, default=False)
+    liquidity_grade: Mapped[str | None] = mapped_column(String, nullable=True)
+    data_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class RadarFeatureRow(Base):
+    """One symbol's computed P23 feature snapshot (append-only, like
+    `system_health`/`risk_states` - each scan run's inputs stay auditable
+    rather than being overwritten by the next one)."""
+
+    __tablename__ = "radar_features"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    symbol: Mapped[str] = mapped_column(String, index=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    price_return_1d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    price_return_5d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    price_return_20d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    atr_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bollinger_width: Mapped[float | None] = mapped_column(Float, nullable=True)
+    compression_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    volume_ratio_5d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    value_ratio_20d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    obv_slope: Mapped[float | None] = mapped_column(Float, nullable=True)
+    distance_20d_high: Mapped[float | None] = mapped_column(Float, nullable=True)
+    close_location_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    benchmark_relative_strength: Mapped[float | None] = mapped_column(Float, nullable=True)
+    liquidity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    feature_version: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class RadarScoreRow(Base):
+    """One symbol's P23 PRE-BREAKOUT score for one scan run - `explanation`
+    is a JSON-encoded {"positive": [...], "negative": [...]} object (see
+    app/stock_radar/scoring.py), stored as `Text` like every other JSON
+    blob in this file (`Recommendation.reasons/risks`, `Approval.detail`) -
+    this project has no native-JSON column anywhere, so this doesn't
+    introduce one."""
+
+    __tablename__ = "radar_scores"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    symbol: Mapped[str] = mapped_column(String, index=True)
+    scan_run_id: Mapped[str] = mapped_column(String, index=True)
+    scored_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    prebreakout_score: Mapped[float] = mapped_column(Float)
+    rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    model_version: Mapped[str] = mapped_column(String)
+    explanation: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ModelWeightVersionRow(Base):
+    """A versioned, auditable snapshot of the PRE-BREAKOUT scoring weights
+    (P23) - `weights` is JSON-encoded (same Text convention as above).
+    `effective_to IS NULL` means this is the currently active version - a
+    later weekly-learning phase creates new rows here rather than mutating
+    one in place, the same append-only pattern `risk_states` uses."""
+
+    __tablename__ = "model_weight_versions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    model_name: Mapped[str] = mapped_column(String, index=True)
+    version: Mapped[str] = mapped_column(String)
+    weights: Mapped[str] = mapped_column(Text)
+    effective_from: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    effective_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

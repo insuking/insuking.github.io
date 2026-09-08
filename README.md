@@ -137,9 +137,33 @@ first-ever run only; after that its own simulated cash balance is used.
 `PAPER_TRADE_ACCOUNT_ID` picks which paper account to run against if you
 want more than one.
 
+### Real stock recommendations (KIS - pending credentials)
+
+The P23 PRE-BREAKOUT scoring engine (`app/stock_radar/`) is fully built and
+tested against mocked KIS responses, but this deployment has no
+`KIS_APP_KEY`/`KIS_APP_SECRET` yet (see `docs/KIS_SETUP.md`) - the account
+is still being opened. Once they're configured:
+
+```bash
+docker compose exec backend python scripts/scan_stocks.py
+```
+
+Scores a small default list of large KOSPI names (or set
+`STOCK_SCAN_SYMBOLS=005930,000660,...` for a custom list - there is no
+verified full KOSPI/KOSDAQ universe downloader yet, see that script's
+module docstring) against the same box-compression / volume / OBV /
+distance-to-high signals P4's stock radar already uses, on real daily
+price history. **Known gap, not yet fixed**: it scores against a flat
+placeholder benchmark rather than a real KOSPI index feed (KIS's
+index-quote endpoint needs independent verification first - see
+`app/stock_radar/scan.py`), so treat relative-strength output as
+untrustworthy until that's resolved. Investor-flow (외국인/기관/프로그램)
+and Catalyst/이벤트 scoring are separate, not-yet-built phases (P24/P25) -
+this script's score is out of 65 points, not 100, and says so.
+
 ## Development process
 
-This project is developed phase-by-phase (P0-P22) following the rules in the
+This project is developed phase-by-phase (P0-P30) following the rules in the
 project master spec: audit → implement → test → auto-fix (max 5 cycles) →
 security check → document → commit, one gate per phase, never skipped.
 Current state lives in `.devstate/state.json`.

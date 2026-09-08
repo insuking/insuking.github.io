@@ -1,11 +1,13 @@
-"""Stock feature calculations (P4).
+"""Stock feature calculations (P4, extended in P23).
 
 Pure functions over P1 `Candle` series - no I/O, no persistence, so they can
 be unit-tested against hand-built or historical fixture data. Later phases
-(P6 recommendation engine) compose these into a single score; this module
-only computes the individual signals docs/MASTER_SPEC.md P4 lists:
-VWAP, RVOL, turnover acceleration, opening range, price action (CLV),
-relative strength, and liquidity.
+(P6 recommendation engine, P23 scoring engine) compose these into a single
+score; this module only computes the individual signals: VWAP, RVOL,
+turnover acceleration, opening range, price action (CLV), relative
+strength, liquidity (P4), and box compression / OBV / distance-to-high
+(P23 - Bollinger width from app/technical/indicators.py rather than a
+second implementation).
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.models.domain import Candle
+from app.technical.indicators import bollinger_bands
 
 
 def typical_price(candle: Candle) -> float:
@@ -113,3 +116,72 @@ def liquidity_score(candles: list[Candle]) -> float:
     if not candles:
         return 0.0
     return sum(turnover(c) for c in candles) / len(candles)
+
+
+def compression_score(candles: list[Candle], window: int = 20, lookback: int = 60) -> float | None:
+    """0.0 (wide) to 1.0 (most compressed in `lookback` bars) - the current
+    Bollinger Band width's percentile rank against its own trailing
+    history, so "compressed" is relative to this stock's own normal
+    range rather than an arbitrary absolute threshold (a low-volatility
+    penny stock and a high-volatility momentum name don't share one
+    cutoff). `None` when there isn't enough history yet, never a
+    fabricated value (see app/radar/features.py's module-wide convention
+    of returning `None`/raising rather than guessing).
+    """
+    bands = bollinger_bands(candles, window)
+    widths = [
+        (b.upper - b.lower) / b.middle if b is not None and b.middle else None for b in bands
+    ]
+    trailing = [w for w in widths[-lookback:] if w is not None]
+    current = widths[-1] if widths else None
+    if current is None or not trailing:
+        return None
+    return sum(1 for w in trailing if w >= current) / len(trailing)
+
+
+def obv(candles: list[Candle]) -> list[float]:
+    """On-Balance Volume: cumulative volume added on an up close, subtracted
+    on a down close, unchanged on a flat close. Index-aligned with `candles`
+    (`obv(candles)[i]` is OBV as of `candles[i]`), first value always 0.0."""
+    values = [0.0]
+    for i in range(1, len(candles)):
+        if candles[i].close > candles[i - 1].close:
+            values.append(values[-1] + candles[i].volume)
+        elif candles[i].close < candles[i - 1].close:
+            values.append(values[-1] - candles[i].volume)
+        else:
+            values.append(values[-1])
+    return values
+
+
+def obv_slope(candles: list[Candle], window: int = 10) -> float | None:
+    """OBV's change over the last `window` bars, normalized by the window's
+    average volume so it's comparable across stocks of very different
+    liquidity - a rough "how many typical days' worth of net buying
+    pressure accumulated" figure. `None` without enough history."""
+    if len(candles) < window + 1:
+        return None
+    values = obv(candles)
+    change = values[-1] - values[-1 - window]
+    avg_volume = sum(c.volume for c in candles[-window:]) / window
+    if avg_volume <= 0:
+        return None
+    return change / (avg_volume * window)
+
+
+def distance_to_high(candles: list[Candle], window: int = 20) -> float | None:
+    """Fractional distance of the latest close below the `window`-bar high:
+    0.0 = the latest bar's own high/close set (or matched) the window high,
+    larger = further below it. Always >= 0 for valid OHLC data, since the
+    window includes the latest bar itself and a bar's high can never be
+    below its own close - this measures "how close to a fresh high", not
+    "has it already broken one" (that distinction needs the bar-by-bar
+    state tracking `app/radar/state.py` already does, not a single-bar
+    snapshot like this one). `None` without enough history."""
+    if len(candles) < window:
+        return None
+    recent = candles[-window:]
+    high = max(c.high for c in recent)
+    if high <= 0:
+        return None
+    return (high - candles[-1].close) / high

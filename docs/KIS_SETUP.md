@@ -65,3 +65,11 @@ not publish a versioned schema guarantee for these fields, so re-verify them
 against a real payload the first time you connect with live credentials -
 if anything has drifted, `tests/backend/test_kis_parsing.py` is where to fix
 the field list.
+
+`KisRestClient.get_daily_prices()` (P23, `inquire-daily-itemchartprice`)
+carries the same caveat one level further: even the field names/response
+shape aren't independently verified this time (the docs portal and the
+GitHub sample repo were both unreachable while this was written - see that
+method's docstring), only matched against the endpoint's long-standing,
+widely-used public shape. Re-verify it against a real response before
+trusting anything P23's scoring engine derives from it in a real decision.
