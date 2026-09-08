@@ -1,11 +1,56 @@
 :root {
   color-scheme: light;
+
+  /* Toss-style design tokens - a flat, high-contrast light theme: soft
+     gray page background, pure-white cards separated by color rather than
+     borders/heavy shadows, one saturated brand blue, and the Korean
+     financial-app convention for gain/loss (RED = up/gain, BLUE = down/
+     loss - the opposite of the US convention, and what Toss itself uses). */
+  --color-bg: #f2f4f6;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f7f8fa;
+
+  --color-text: #191f28;
+  --color-text-secondary: #4e5968;
+  --color-text-tertiary: #8b95a1;
+  --color-border: #eceef1;
+
+  --color-primary: #3182f6;
+  --color-primary-dark: #1b64da;
+  --color-primary-tint: #e8f3ff;
+
+  --color-gain: #f04452;
+  --color-gain-tint: #fef0f1;
+  --color-loss: #3182f6;
+  --color-loss-tint: #e8f3ff;
+
+  --color-danger: #f04452;
+  --color-danger-tint: #fef0f1;
+  --color-warn: #ff9800;
+  --color-warn-tint: #fff4e5;
+
+  --radius-lg: 20px;
+  --radius-md: 16px;
+  --radius-sm: 10px;
+  --radius-pill: 999px;
+
+  --font-family:
+    -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", Roboto,
+    "Malgun Gothic", sans-serif;
 }
 
 * {
   box-sizing: border-box;
 }
 
+html {
+  background: var(--color-bg);
+}
+
 body {
   margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-family);
+  -webkit-font-smoothing: antialiased;
 }

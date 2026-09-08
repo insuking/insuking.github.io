@@ -1,107 +1,125 @@
 .approval-page {
   max-width: 480px;
   margin: 0 auto;
-  padding: 16px;
+  min-height: 100vh;
+  padding: 20px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
+  background: var(--color-bg);
 }
 
 .approval-page__notice {
   text-align: center;
-  color: #6b7280;
+  color: var(--color-text-tertiary);
   padding: 24px 0;
 }
 
 .approval-page__notice--error {
-  color: #b42318;
+  color: var(--color-danger);
 }
 
 .approval-page__header {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  align-items: center;
+  padding: 4px 0;
 }
 
 .approval-page__symbol {
   font-weight: 700;
-  font-size: 1.2rem;
+  font-size: 1.3rem;
+  letter-spacing: -0.01em;
 }
 
 .approval-page__badge {
-  font-size: 0.8rem;
-  color: #2f5fff;
-  background: #eaefff;
-  padding: 2px 10px;
-  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-primary-dark);
+  background: var(--color-primary-tint);
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
 }
 
 .approval-page__countdown {
-  font-size: 0.85rem;
-  color: #a15c00;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--color-warn);
   margin: 0;
 }
 
 .approval-page__grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  background: #fff;
-  border-radius: 12px;
-  padding: 14px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  gap: 14px 10px;
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
 }
 
 .approval-page__cell {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
 
 .approval-page__label {
   font-size: 0.75rem;
-  color: #6b7280;
+  color: var(--color-text-tertiary);
 }
 
 .approval-page__value {
-  font-weight: 600;
+  font-weight: 700;
+  font-size: 0.98rem;
+  letter-spacing: -0.01em;
 }
 
 .approval-page__details {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  gap: 14px;
   font-size: 0.85rem;
-  background: #f7f8fb;
-  border-radius: 8px;
-  padding: 10px 12px;
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px;
 }
 
 .approval-page__details-title {
-  font-weight: 600;
-  margin: 0 0 4px;
+  font-weight: 700;
+  margin: 0 0 6px;
 }
 
 .approval-page__details ul {
   margin: 0;
   padding-left: 16px;
+  color: var(--color-text-secondary);
+}
+
+.approval-page__details li {
+  margin-bottom: 4px;
 }
 
 .approval-page__pin-box {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  background: #f7f8fb;
-  border-radius: 10px;
-  padding: 12px;
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  padding: 14px;
 }
 
 .approval-page__input {
-  min-height: 44px;
-  border: 1px solid #d0d5dd;
-  border-radius: 8px;
-  padding: 0 12px;
+  min-height: 48px;
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0 14px;
   font-size: 1rem;
+  background: var(--color-surface-muted);
+}
+
+.approval-page__input:focus {
+  outline: none;
+  border-color: var(--color-primary);
 }
 
 .approval-page__actions {
@@ -111,26 +129,26 @@
 }
 
 .approval-page__cta {
-  min-height: 48px;
+  min-height: 52px;
   border: none;
-  border-radius: 10px;
-  background: #eef0f4;
-  color: #1f2937;
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
+  color: var(--color-text);
   font-size: 0.95rem;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .approval-page__cta--primary {
-  background: #2f5fff;
+  background: var(--color-primary);
   color: white;
 }
 
 .approval-page__cta--danger {
-  background: #fdecea;
-  color: #b42318;
+  background: var(--color-danger-tint);
+  color: var(--color-danger);
 }
 
 .approval-page__cta:disabled {
-  background: #e5e7eb;
-  color: #9ca3af;
+  background: var(--color-border);
+  color: var(--color-text-tertiary);
 }

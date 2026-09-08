@@ -4,6 +4,17 @@ import type { DashboardPerformance, PerformanceSummary } from "../types/dashboar
 
 const numberFormatter = new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 0 });
 
+function pnlClass(value: number): string {
+  if (value > 0) return "pnl-gain";
+  if (value < 0) return "pnl-loss";
+  return "pnl-flat";
+}
+
+function formatPnl(value: number): string {
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${numberFormatter.format(value)}`;
+}
+
 function PerformanceCard({ title, summary }: { title: string; summary: PerformanceSummary }) {
   const winRate = summary.trade_count > 0 ? (summary.win_count / summary.trade_count) * 100 : null;
   return (
@@ -11,7 +22,7 @@ function PerformanceCard({ title, summary }: { title: string; summary: Performan
       <p className="card-title">{title}</p>
       <div className="card-row">
         <span>실현손익</span>
-        <span>{numberFormatter.format(summary.realized_pnl)}</span>
+        <span className={pnlClass(summary.realized_pnl)}>{formatPnl(summary.realized_pnl)}</span>
       </div>
       <div className="card-row">
         <span>거래 수</span>
