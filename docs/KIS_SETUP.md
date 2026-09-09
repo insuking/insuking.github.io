@@ -226,3 +226,54 @@ succeeds, scores show up to 77/77 instead of 65/65 (`institutional_flow`
 factor lines in the output); if `get_investor_trend()` raises for a
 symbol, that symbol is simply scored without the flow factor (same
 65-point ceiling as before P25), not a crashed scan.
+
+## Full KOSPI/KOSDAQ universe (KRX 전종목 마스터파일) - P30
+
+`app/integrations/kis/krx_master.py` downloads and parses the real KRX
+symbol master files (`kospi_code.mst.zip`/`kosdaq_code.mst.zip`) -
+`scripts/scan_stocks.py` defaulted to 5 hardcoded large-cap names until
+now because this project had no verified parser for them (see that
+script's own earlier docstring history). **Not** part of KIS's
+authenticated REST API - these are plain static files on a separate
+public host (`new.real.download.dws.co.kr`), no `appkey`/`appsecret`/
+`tr_id` needed.
+
+**Field layout provenance**: fetched directly (`curl` on the raw GitHub
+content) from KIS's own public sample repo,
+`koreainvestment/open-trading-api`'s `stocks_info/kis_kospi_code_mst.py`
+and `kis_kosdaq_code_mst.py` - not an AI-summarized paraphrase of that
+file. That distinction mattered in practice: a first pass at reading this
+file through a summarizing fetch tool mis-transcribed the `field_specs`
+width list, caught only because the widths didn't sum to the expected row
+length - the raw source was fetched afterward specifically to avoid
+trusting that transcription for a byte-offset parser. See
+`krx_master.py`'s own module docstring for the full derivation (KOSPI:
+227 real data bytes/70 columns; KOSDAQ: 221 bytes/64 columns - genuinely
+different layouts, not assumed symmetric).
+
+Only 4 of each market's dozens of columns are parsed: symbol, name,
+`거래정지`(halted)/`관리종목`(administrative) as tradability flags, and
+`전일거래량`(previous-day volume) as a liquidity-ranking signal -
+`scripts/scan_stocks.py`'s `STOCK_SCAN_UNIVERSE=FULL` uses it to pick a
+real top-N universe (`STOCK_SCAN_TOP_N_PER_MARKET`, default 40 per
+market) instead of scanning every listed symbol, which would run well
+into the thousands and isn't viable against KIS's confirmed ~2 req/sec
+rate limit for the per-symbol calls `scan_stock_universe()` already makes.
+KOSPI and KOSDAQ are ranked **separately**, never merged into one
+cross-market sort by market cap - KOSPI's `시가총액` column has no stated
+unit in the reference script while KOSDAQ's is explicitly "(억)", and this
+project won't compare two differently-united numbers without confirming
+they match.
+
+**BLOCKED, not verified against a live response**: `new.real.download.dws.co.kr`
+is not reachable from this development sandbox (egress policy denies the
+CONNECT, same class of restriction as this session's Docker Hub image
+pulls) - see `tests/backend/test_krx_master_integration.py`, skipped for
+exactly this reason, same pattern as `test_upbit_integration.py`'s
+"BLOCKED - egress, not credentials". The byte offsets above were computed
+by mechanically pairing the reference scripts' own `field_specs`/
+column-name lists in order (not eyeballed) and cross-checked by summing
+to the expected row width, so they're evidence-based - but unlike this
+project's other KIS integrations, they haven't been proven against a real
+downloaded file yet. Re-verify the first time this runs somewhere with
+real network access to `new.real.download.dws.co.kr`.

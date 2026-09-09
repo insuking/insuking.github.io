@@ -10,15 +10,18 @@ why). If the DB write fails for any reason (unreachable Postgres, schema
 drift), this script prints a warning and still shows the scan results -
 persistence failing must never hide a real, already-computed scan.
 
-**Universe**: `STOCK_SCAN_SYMBOLS` (comma-separated KRX 6-digit codes) if
-set, else a small default list of large, liquid KOSPI names - not the
-full KOSPI/KOSDAQ universe. A real full-universe scan needs KIS's KRX
-symbol master file, which this project has not built a verified
-downloader/parser for yet (see app/stock_radar/scan.py's module
-docstring) - extend this script's symbol list (or set
-`STOCK_SCAN_SYMBOLS`) once that exists; `securities` rows are created
-automatically for whatever symbols this script scans, no manual seeding
-needed.
+**Universe**: three ways, in priority order -
+1. `STOCK_SCAN_SYMBOLS` (comma-separated KRX 6-digit codes), if set.
+2. `STOCK_SCAN_UNIVERSE=FULL` (P30) - the real KOSPI+KOSDAQ universe from
+   KIS's KRX symbol master file (`app/integrations/kis/krx_master.py`),
+   ranked by previous-day volume and capped at `STOCK_SCAN_TOP_N_PER_MARKET`
+   (default 40) per market - not every listed symbol, since KIS's confirmed
+   ~2 req/sec rate limit makes scanning the full multi-thousand-symbol
+   universe impractical in one run. Falls back to the default list below if
+   the master-file fetch fails for any reason.
+3. Otherwise, a small default list of large, liquid KOSPI names.
+`securities` rows are created automatically for whatever symbols this
+script scans, no manual seeding needed.
 
 **Benchmark**: this script attempts a real KOSPI index fetch via
 `KisRestClient.get_index_daily_prices()` - confirmed working by a real
@@ -61,6 +64,11 @@ from app.core.config import get_settings
 from app.db.session import session_scope
 from app.integrations.kis.auth import KisAuth
 from app.integrations.kis.errors import KisApiError
+from app.integrations.kis.krx_master import (
+    fetch_kosdaq_master,
+    fetch_kospi_master,
+    rank_tradable_by_liquidity,
+)
 from app.integrations.kis.rest_client import KOSPI_INDEX_CODE, KisRestClient
 from app.models.domain import Candle, Market
 from app.radar.regime import MarketRegime, classify_market_regime
@@ -75,6 +83,29 @@ _DEFAULT_SYMBOLS = [
     "035420",  # NAVER
 ]
 _HISTORY_DAYS = 200
+_DEFAULT_FULL_UNIVERSE_TOP_N_PER_MARKET = 40
+
+
+async def _full_universe_symbols(top_n_per_market: int) -> list[str]:
+    """`STOCK_SCAN_UNIVERSE=FULL` path (P30) - real KOSPI+KOSDAQ symbols
+    from the KRX master file (`app/integrations/kis/krx_master.py`) instead
+    of `_DEFAULT_SYMBOLS`'s 5 hardcoded names. Ranked separately per market
+    by previous-day volume (not merged into one cross-market sort - see
+    that module's own docstring for why) and capped at `top_n_per_market`
+    each, since KIS's confirmed ~2 req/sec rate limit makes scanning the
+    full multi-thousand-symbol universe impractical in one run.
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        kospi_rows, kosdaq_rows = await asyncio.gather(
+            fetch_kospi_master(client), fetch_kosdaq_master(client)
+        )
+    kospi_top = rank_tradable_by_liquidity(kospi_rows, top_n_per_market)
+    kosdaq_top = rank_tradable_by_liquidity(kosdaq_rows, top_n_per_market)
+    print(
+        f"Using real KRX master-file universe: {len(kospi_top)} KOSPI + {len(kosdaq_top)} KOSDAQ "
+        f"symbols (top {top_n_per_market} each by previous-day volume).\n"
+    )
+    return [r.symbol for r in kospi_top] + [r.symbol for r in kosdaq_top]
 
 
 def _flat_benchmark(length: int) -> list[Candle]:
@@ -102,7 +133,21 @@ async def run() -> None:
         return
 
     symbols_raw = os.environ.get("STOCK_SCAN_SYMBOLS")
-    symbols = [s.strip() for s in symbols_raw.split(",")] if symbols_raw else _DEFAULT_SYMBOLS
+    if symbols_raw:
+        symbols = [s.strip() for s in symbols_raw.split(",")]
+    elif os.environ.get("STOCK_SCAN_UNIVERSE", "").upper() == "FULL":
+        top_n_per_market = int(os.environ.get("STOCK_SCAN_TOP_N_PER_MARKET", _DEFAULT_FULL_UNIVERSE_TOP_N_PER_MARKET))
+        try:
+            symbols = await _full_universe_symbols(top_n_per_market)
+        except (KisApiError, httpx.HTTPError, KeyError, ValueError) as exc:
+            print(
+                f"WARNING: KRX master-file fetch failed ({exc!r}) - falling back to the "
+                f"{len(_DEFAULT_SYMBOLS)}-symbol default list. See "
+                "app/integrations/kis/krx_master.py's docstring.\n"
+            )
+            symbols = _DEFAULT_SYMBOLS
+    else:
+        symbols = _DEFAULT_SYMBOLS
 
     end_date = datetime.now(UTC).strftime("%Y%m%d")
     start_date = (datetime.now(UTC) - timedelta(days=_HISTORY_DAYS)).strftime("%Y%m%d")

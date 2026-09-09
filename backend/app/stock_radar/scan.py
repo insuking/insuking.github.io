@@ -96,11 +96,13 @@ async def scan_stock_universe(
     top_n: int = 30,
 ) -> tuple[list[PreBreakoutScore], dict[str, str]]:
     """Fetch each symbol's real daily price history and rank them. `symbols`
-    is caller-supplied rather than pulled from a KRX master-file download:
-    this project has no verified master-file parser yet (see
-    docs/KIS_SETUP.md and `app/db/models.py`'s `SecurityRow` for the
-    `securities` table this would populate) - seed it manually or via
-    `scripts/scan_stocks.py`'s symbol list for now.
+    stays caller-supplied rather than this function pulling the KRX
+    universe itself - `app/integrations/kis/krx_master.py` (P30) is the
+    real master-file downloader/parser, wired in at `scripts/
+    scan_stocks.py`'s `STOCK_SCAN_UNIVERSE=FULL` layer (which then narrows
+    the full universe to a liquidity-ranked top-N before calling this
+    function), not here - this function has no opinion on where its
+    symbol list came from.
 
     Also returns a `symbol -> Korean name` dict (from the same daily-price
     call, via `KisRestClient.get_daily_prices_with_name()` - no extra
