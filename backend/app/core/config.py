@@ -32,9 +32,36 @@ class Settings(BaseSettings):
     kis_rest_base_url: str = "https://openapi.koreainvestment.com:9443"
     kis_ws_url: str = "wss://ops.koreainvestment.com:21000"
 
+    # P29 order placement: KIS's real-vs-모의투자(paper) environments use
+    # different tr_id values on the *same* order endpoint - unlike
+    # `kis_rest_base_url`, which just points at a different host, this is a
+    # value baked into every order request, so it needs its own explicit
+    # switch rather than being inferred from the URL. Defaults to `True`
+    # (paper tr_ids) for the same reason `live_trading` defaults to
+    # `False`: "실전/모의 환경 전환" is one of the master spec's own
+    # P0급 오류 categories (never automatic, always a deliberate user
+    # action) - so getting real-money order routing by accident, just
+    # because someone forgot to flip a flag, must not be possible.
+    kis_paper_trading: bool = True
+
     @property
     def kis_configured(self) -> bool:
         return bool(self.kis_app_key and self.kis_app_secret)
+
+    @property
+    def kis_cano(self) -> str:
+        """The 8-digit `CANO` half of `kis_account_no` ("XXXXXXXX-XX" per
+        docs/KIS_SETUP.md). Empty string if `kis_account_no` isn't set or
+        doesn't contain a "-" - callers (P29 order placement) must check
+        `kis_configured`/a non-empty result themselves rather than this
+        property silently guessing at a malformed value."""
+        return self.kis_account_no.split("-", 1)[0] if "-" in self.kis_account_no else ""
+
+    @property
+    def kis_acnt_prdt_cd(self) -> str:
+        """The 2-digit `ACNT_PRDT_CD` half of `kis_account_no` - see
+        `kis_cano`."""
+        return self.kis_account_no.split("-", 1)[1] if "-" in self.kis_account_no else ""
 
     # Toss Securities Open API - see docs/TOSS_SETUP.md. Same "empty means
     # not configured, never pretend" rule as KIS above.

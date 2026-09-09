@@ -122,6 +122,75 @@ placeholder benchmark (with a printed warning) if this call ever raises,
 as a safety net, but that path is no longer expected to trigger in
 practice.
 
+## Order placement (P29) - real money, read this before touching it
+
+`app/integrations/kis/orders.py` (`KisOrderClient`) and
+`app/integrations/kis/execution.py` (`KisExecutionProvider`) implement
+`order-cash` (place) and `order-rvsecncl` (cancel) - the first KIS
+endpoints in this project that can move real money. Field layout was
+verified more carefully than any earlier KIS endpoint: tr_ids
+(`TTTC0012U`/`TTTC0011U` real buy/sell, `VTTC0012U`/`VTTC0011U` paper)
+and every request body field were cross-checked across three separate
+fetches of `koreainvestment/open-trading-api`'s own sample code, not a
+single source - see `orders.py`'s own module docstring for the full
+per-field provenance.
+
+**Two independent safety switches, both defaulting to the safe side**,
+matching the master spec's "실전/모의 환경 전환" and "실전 신규매수" both
+being P0급 오류 categories that must never happen by accident:
+
+1. `LIVE_TRADING` (existing, shared with Toss/Upbit) - `false` by
+   default. Every mutating method on `KisExecutionProvider` refuses to
+   run at all, before any network call, unless this is explicitly `true`.
+2. `KIS_PAPER_TRADING` (new, KIS-specific) - `true` by default. Selects
+   the paper (모의투자) tr_ids instead of the real ones. Unlike
+   `KIS_REST_BASE_URL`, which just points at a different KIS host, the
+   tr_id is baked into every order request body - so this needed its own
+   explicit switch rather than being inferred from the URL. Getting real
+   order routing requires deliberately changing **both** settings from
+   their defaults, not one.
+
+**What is NOT built yet**: `reconcile_order()` is not implemented - it
+always raises `KisReconciliationNotSupportedError`. Toss/Upbit's versions
+do best-effort matching against an order-listing endpoint this project
+had already verified in an earlier phase; KIS's natural equivalent
+(`inquire-daily-ccld`, 일별주문체결조회) needs mandatory pagination
+tokens and an account-type filter this project hasn't confirmed real
+values for, and its response field names for an individual fill were
+never independently confirmed either. Guessing at both the request *and*
+response shape at once for the one endpoint whose job is "tell me what
+actually happened to a real order" was judged a worse trade than admitting
+the gap - an order left `UNKNOWN` after a timeout must be checked by hand
+in the KIS HTS/app until this is built for real.
+
+Also **not built yet**: nothing in this project currently calls
+`KisExecutionProvider` automatically. Toss/Upbit (P15) have the same gap -
+`ApprovalService.decide()` only ever produces an APPROVED/REJECTED
+*decision* (see `app/approval/service.py`'s own module docstring); the
+orchestrator that would revalidate an approved recommendation (P14) and
+then actually call an execution provider has never been built for any
+broker in this project. Building `KisExecutionProvider` doesn't skip that
+gap, it just means KIS is ready to be wired in once that bridge exists -
+until then, every method here is only reachable by calling it directly
+(e.g. from a Python shell), not from anything a user does through the app.
+
+**No automated real-connection test places, modifies, or cancels a real
+order** - not even against 모의투자. Unlike Upbit's real-connection test
+(`test_upbit_execution_integration.py`), which calls a genuinely
+read-only `list_orders` endpoint to prove its auth signing works without
+risking an order, this project has no verified read-only KIS endpoint in
+the same auth family that isn't itself an order mutation - and KIS's
+Bearer-token auth (`/oauth2/tokenP`) is already proven working for real
+by every other KIS endpoint in this project (`get_quote`,
+`get_daily_prices`, `get_index_daily_prices`, `get_investor_trend` all
+ran successfully against real KIS servers earlier in this project's
+history). Re-proving the same auth mechanism by risking a real order was
+judged not worth it. **If you want to verify order placement for real,
+do it manually**: set `KIS_PAPER_TRADING=true` (paper trading, real
+KIS servers, no real money) and call `KisOrderClient.place_order()` by
+hand for one small paper order before ever considering
+`KIS_PAPER_TRADING=false`.
+
 ## Investor flow (외국인/기관 순매수) - P25
 
 `KisRestClient.get_investor_trend(symbol)` calls `inquire-investor` (tr_id
