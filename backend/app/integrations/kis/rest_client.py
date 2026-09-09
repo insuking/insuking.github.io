@@ -51,6 +51,14 @@ DEFAULT_MAX_REQUESTS_PER_SECOND = 2.0
 DEFAULT_RATE_LIMIT_BACKOFF_SECONDS = 1.0
 _MAX_RATE_LIMIT_RETRIES = 3
 
+# get_index_daily_prices(): NOT independently verified (see that method's
+# docstring) - "U" (지수) vs "J" (주식) for FID_COND_MRKT_DIV_CODE, and
+# these index codes, are the commonly-documented convention across public
+# KIS client libraries, not a payload this project has confirmed.
+_INDEX_MARKET_DIV_CODE = "U"
+KOSPI_INDEX_CODE = "0001"
+KOSDAQ_INDEX_CODE = "1001"
+
 
 class KisRestClient:
     def __init__(
@@ -112,6 +120,35 @@ class KisRestClient:
         )
         rows = body.get("output2", [])
         candles = [self._to_daily_candle(row, symbol) for row in rows if row.get("stck_bsop_date")]
+        candles.sort(key=lambda c: c.open_time)
+        return candles
+
+    async def get_index_daily_prices(self, index_code: str, start_date: str, end_date: str) -> list[Candle]:
+        """Daily KOSPI/KOSDAQ index candles via the same
+        inquire-daily-itemchartprice endpoint `get_daily_prices()` uses for
+        stocks, but with `FID_COND_MRKT_DIV_CODE="U"` (지수) instead of "J"
+        (주식) - this is the piece `app/stock_radar/scan.py` has been using
+        a flat placeholder benchmark in place of. NOT independently
+        verified (KIS's docs and the response field names an index row
+        actually uses could differ from a stock row's `stck_*` fields
+        assumed here) - the first real call is the verification; if it
+        raises `KeyError`/`KisApiError`, that's real signal about what to
+        fix, not a bug to route around silently.
+        """
+        body = await self._get(
+            "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+            _TR_ID_DAILY_CHART_PRICE,
+            {
+                "FID_COND_MRKT_DIV_CODE": _INDEX_MARKET_DIV_CODE,
+                "FID_INPUT_ISCD": index_code,
+                "FID_INPUT_DATE_1": start_date,
+                "FID_INPUT_DATE_2": end_date,
+                "FID_PERIOD_DIV_CODE": "D",
+                "FID_ORG_ADJ_PRC": "0",
+            },
+        )
+        rows = body.get("output2", [])
+        candles = [self._to_daily_candle(row, index_code) for row in rows if row.get("stck_bsop_date")]
         candles.sort(key=lambda c: c.open_time)
         return candles
 

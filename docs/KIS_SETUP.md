@@ -89,3 +89,24 @@ not a number KIS has published) and retries an `EGW00201` response with
 backoff instead of surfacing it as a hard failure. Tighten the default
 further if `EGW00201` still appears in practice, or raise it once a longer
 real run shows headroom.
+
+## KOSPI/KOSDAQ index benchmark
+
+`KisRestClient.get_index_daily_prices(index_code, start_date, end_date)`
+fetches real index candles (KOSPI = `KOSPI_INDEX_CODE` = `"0001"`, KOSDAQ =
+`KOSDAQ_INDEX_CODE` = `"1001"`) via the same `inquire-daily-itemchartprice`
+endpoint `get_daily_prices()` uses for stocks, but with
+`FID_COND_MRKT_DIV_CODE="U"` (지수) instead of `"J"` (주식). **Not yet
+independently verified against real KIS servers** - the "U" division code
+and these index codes are the commonly-documented convention across public
+KIS client libraries, not a payload this project has confirmed, and an
+index row's response fields could in principle differ from a stock row's
+`stck_*` fields this method assumes.
+
+`scripts/scan_stocks.py` now calls this for its KOSPI benchmark and falls
+back to a flat placeholder (with a printed warning) if it raises. The first
+real docker-compose run against this method is the actual verification: if
+it succeeds, this note should be updated the same way the `get_daily_prices()`
+note above was; if it raises `KisApiError`/`KeyError`, fix
+`get_index_daily_prices()`/`_to_daily_candle()` in `rest_client.py` from the
+real error, same as before.

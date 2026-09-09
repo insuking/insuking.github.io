@@ -236,3 +236,44 @@ async def test_get_daily_prices_skips_rows_missing_a_trade_date() -> None:
     candles = await rest.get_daily_prices("005930", "20260101", "20260107")
 
     assert len(candles) == 1
+
+
+@pytest.mark.asyncio
+async def test_get_index_daily_prices_uses_the_index_market_div_code() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/oauth2/tokenP":
+            return httpx.Response(200, json={"access_token": "test-token", "expires_in": 86400})
+        if request.url.path == "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice":
+            return httpx.Response(
+                200,
+                json={
+                    "rt_cd": "0",
+                    "output1": {},
+                    "output2": [
+                        {
+                            "stck_bsop_date": "20260107",
+                            "stck_oprc": "2500",
+                            "stck_hgpr": "2520",
+                            "stck_lwpr": "2490",
+                            "stck_clpr": "2510",
+                            "acml_vol": "500000000",
+                        }
+                    ],
+                },
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://mock.kis.test")
+    rest = KisRestClient(client, KisAuth(client=client, settings=_settings()))
+
+    candles = await rest.get_index_daily_prices("0001", "20260101", "20260107")
+
+    assert len(candles) == 1
+    assert candles[0].close == 2510.0
+
+    index_request = next(r for r in requests if "inquire-daily-itemchartprice" in str(r.url))
+    assert index_request.url.params["FID_COND_MRKT_DIV_CODE"] == "U"
+    assert index_request.url.params["FID_INPUT_ISCD"] == "0001"

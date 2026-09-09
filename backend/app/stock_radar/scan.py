@@ -20,15 +20,15 @@ Split into a pure layer and a thin I/O layer, same shape as
   guess, not a fix for an observed problem. Add one once a real run shows
   it's needed.
 
-The KOSPI/KOSDAQ benchmark series is a caller-supplied `benchmark_candles`
-parameter rather than fetched internally: KIS's index-quote endpoint uses a
-different `FID_COND_MRKT_DIV_CODE` ("U", not the stock-quote "J") that this
-phase has not independently verified (KIS's docs portal and the
-`open-trading-api` GitHub sample were both unreachable while this was
-written). Guessing at an unverified index-fetch call here would risk
-silently returning garbage relative-strength numbers into every score;
-`scripts/scan_stocks.py` documents this as an explicit open item to verify
-once real credentials exist.
+The KOSPI/KOSDAQ benchmark series stays a caller-supplied `benchmark_candles`
+parameter rather than fetched internally here - this module has no opinion
+on where it came from. `scripts/scan_stocks.py` is the caller that decides:
+it now calls `KisRestClient.get_index_daily_prices()` for a real KOSPI
+series, falling back to a flat placeholder only if that call fails (see
+that script's module docstring). `get_index_daily_prices()`'s own docstring
+still flags its field layout as not independently verified against real
+KIS servers - that verification, and any fallout from it, lives there, not
+in this module.
 """
 
 from __future__ import annotations

@@ -16,13 +16,17 @@ downloader/parser for yet (see app/stock_radar/scan.py's module
 docstring) - seed `securities` by hand or extend this script once that
 exists.
 
-**Benchmark**: this script does NOT fetch a real KOSPI index series - see
-app/stock_radar/scan.py's module docstring for why (KIS's index-quote
-endpoint uses an unverified different market-division code). It builds a
-flat placeholder benchmark instead, which makes every score's "시장
-상대강도" component read as the stock's own raw return rather than a true
-excess-over-benchmark figure. This is a known, documented gap - fix it
-before trusting a real score for anything real-money-adjacent.
+**Benchmark**: this script now attempts a real KOSPI index fetch via
+`KisRestClient.get_index_daily_prices()` (see that method's docstring -
+still not independently verified against real KIS servers as of this
+writing). If that call fails for any reason (unverified field layout,
+KIS error, network), this script falls back to a flat placeholder
+benchmark and prints a clear warning rather than crashing the whole scan
+- in that fallback case every score's "시장 상대강도" component still
+reads as the stock's own raw return rather than a true excess-over-
+benchmark figure. Once a real run confirms the index fetch works, this
+fallback path should stop triggering in practice; it stays in place as
+a safety net either way.
 """
 
 from __future__ import annotations
@@ -38,7 +42,8 @@ import httpx
 
 from app.core.config import get_settings
 from app.integrations.kis.auth import KisAuth
-from app.integrations.kis.rest_client import KisRestClient
+from app.integrations.kis.errors import KisApiError
+from app.integrations.kis.rest_client import KOSPI_INDEX_CODE, KisRestClient
 from app.models.domain import Candle
 from app.stock_radar.scan import scan_stock_universe
 
@@ -82,18 +87,27 @@ async def run() -> None:
     end_date = datetime.now(UTC).strftime("%Y%m%d")
     start_date = (datetime.now(UTC) - timedelta(days=_HISTORY_DAYS)).strftime("%Y%m%d")
 
-    print(
-        "WARNING: using a flat placeholder KOSPI benchmark, not a real index feed - "
-        "see this script's module docstring. Relative-strength scores below are not trustworthy yet.\n"
-    )
-
     async with httpx.AsyncClient(base_url=settings.kis_rest_base_url) as client:
         auth = KisAuth(client=client, settings=settings)
         rest = KisRestClient(client, auth)
+
+        try:
+            benchmark_candles = await rest.get_index_daily_prices(KOSPI_INDEX_CODE, start_date, end_date)
+            if not benchmark_candles:
+                raise KisApiError("KOSPI index fetch returned no candles")
+            print(f"Using real KOSPI index benchmark ({len(benchmark_candles)} candles).\n")
+        except (KisApiError, KeyError, ValueError) as exc:
+            print(
+                f"WARNING: real KOSPI index fetch failed ({exc!r}) - falling back to a flat "
+                "placeholder benchmark. Relative-strength scores below are not trustworthy yet. "
+                "See KisRestClient.get_index_daily_prices()'s docstring.\n"
+            )
+            benchmark_candles = _flat_benchmark(_HISTORY_DAYS)
+
         results = await scan_stock_universe(
             rest,
             symbols=symbols,
-            benchmark_candles=_flat_benchmark(_HISTORY_DAYS),
+            benchmark_candles=benchmark_candles,
             start_date=start_date,
             end_date=end_date,
         )
