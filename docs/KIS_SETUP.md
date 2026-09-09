@@ -94,19 +94,26 @@ real run shows headroom.
 
 `KisRestClient.get_index_daily_prices(index_code, start_date, end_date)`
 fetches real index candles (KOSPI = `KOSPI_INDEX_CODE` = `"0001"`, KOSDAQ =
-`KOSDAQ_INDEX_CODE` = `"1001"`) via the same `inquire-daily-itemchartprice`
-endpoint `get_daily_prices()` uses for stocks, but with
-`FID_COND_MRKT_DIV_CODE="U"` (지수) instead of `"J"` (주식). **Not yet
-independently verified against real KIS servers** - the "U" division code
-and these index codes are the commonly-documented convention across public
-KIS client libraries, not a payload this project has confirmed, and an
-index row's response fields could in principle differ from a stock row's
-`stck_*` fields this method assumes.
+`KOSDAQ_INDEX_CODE` = `"1001"`). It first tried reusing
+`get_daily_prices()`'s `inquire-daily-itemchartprice` endpoint with
+`FID_COND_MRKT_DIV_CODE="U"` - **a real docker-compose run proved that
+wrong**: KIS returned `200 {"rt_cd": "2", "msg_cd": "OPSQ2001", "msg1":
+"ERROR INVALID FID_COND_MRKT_DIV_CODE"}`, since that endpoint only accepts
+stock/ETF/ETN division codes. Once outbound web access let this project
+check `github.com/koreainvestment/open-trading-api`'s own sample code
+(`examples_llm/domestic_stock/inquire_daily_indexchartprice/`), it was
+confirmed indices are a **separate endpoint**,
+`inquire-daily-indexchartprice` (tr_id `FHKUP03500100`), whose daily rows
+use `bstp_nmix_*` (업종지수) field names instead of a stock row's `stck_*`
+fields. `rest_client.py` now calls that endpoint with a dedicated
+`_to_daily_index_candle()` parser. Still not independently confirmed
+against a live response from this project's own credentials - only
+against KIS's public sample code.
 
-`scripts/scan_stocks.py` now calls this for its KOSPI benchmark and falls
-back to a flat placeholder (with a printed warning) if it raises. The first
-real docker-compose run against this method is the actual verification: if
-it succeeds, this note should be updated the same way the `get_daily_prices()`
-note above was; if it raises `KisApiError`/`KeyError`, fix
-`get_index_daily_prices()`/`_to_daily_candle()` in `rest_client.py` from the
-real error, same as before.
+`scripts/scan_stocks.py` calls this for its KOSPI benchmark and falls back
+to a flat placeholder (with a printed warning) if it raises. The next real
+docker-compose run against this method is the actual verification: if it
+succeeds, this note should say so the same way the `get_daily_prices()`
+note above does; if it still raises `KisApiError`/`KeyError`, fix
+`get_index_daily_prices()`/`_to_daily_index_candle()` in `rest_client.py`
+from the real error.

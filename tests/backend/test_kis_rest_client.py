@@ -239,14 +239,22 @@ async def test_get_daily_prices_skips_rows_missing_a_trade_date() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_index_daily_prices_uses_the_index_market_div_code() -> None:
+async def test_get_index_daily_prices_uses_the_dedicated_index_endpoint() -> None:
+    """A real docker-compose run against real KIS servers proved indices
+    are NOT `get_daily_prices()`'s endpoint with a different market-division
+    code - KIS rejected that with `{"rt_cd": "2", "msg_cd": "OPSQ2001",
+    "msg1": "ERROR INVALID FID_COND_MRKT_DIV_CODE"}`. They're a separate
+    endpoint, `inquire-daily-indexchartprice`, whose rows use `bstp_nmix_*`
+    field names instead of a stock row's `stck_*` fields - see
+    rest_client.py's module docstring."""
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         if request.url.path == "/oauth2/tokenP":
             return httpx.Response(200, json={"access_token": "test-token", "expires_in": 86400})
-        if request.url.path == "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice":
+        if request.url.path == "/uapi/domestic-stock/v1/quotations/inquire-daily-indexchartprice":
+            assert request.headers["tr_id"] == "FHKUP03500100"
             return httpx.Response(
                 200,
                 json={
@@ -255,10 +263,10 @@ async def test_get_index_daily_prices_uses_the_index_market_div_code() -> None:
                     "output2": [
                         {
                             "stck_bsop_date": "20260107",
-                            "stck_oprc": "2500",
-                            "stck_hgpr": "2520",
-                            "stck_lwpr": "2490",
-                            "stck_clpr": "2510",
+                            "bstp_nmix_oprc": "2500",
+                            "bstp_nmix_hgpr": "2520",
+                            "bstp_nmix_lwpr": "2490",
+                            "bstp_nmix_prpr": "2510",
                             "acml_vol": "500000000",
                         }
                     ],
@@ -273,7 +281,8 @@ async def test_get_index_daily_prices_uses_the_index_market_div_code() -> None:
 
     assert len(candles) == 1
     assert candles[0].close == 2510.0
+    assert candles[0].open == 2500.0
 
-    index_request = next(r for r in requests if "inquire-daily-itemchartprice" in str(r.url))
+    index_request = next(r for r in requests if "inquire-daily-indexchartprice" in str(r.url))
     assert index_request.url.params["FID_COND_MRKT_DIV_CODE"] == "U"
     assert index_request.url.params["FID_INPUT_ISCD"] == "0001"
