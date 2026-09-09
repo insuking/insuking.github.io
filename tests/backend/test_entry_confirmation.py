@@ -5,7 +5,6 @@ a P23 PRE-BREAKOUT score and acting on it later.
 from __future__ import annotations
 
 import pytest
-
 from app.radar.regime import MarketRegime
 from app.stock_radar.entry_confirmation import (
     EntryConfirmationThresholds,
@@ -27,6 +26,7 @@ def test_unchanged_price_in_a_risk_on_market_is_confirmed() -> None:
     assert result.verdict == EntryVerdict.CONFIRMED
     assert result.gap_pct == pytest.approx(0.0)
     assert result.reasons == []
+    assert result.current_price == pytest.approx(100.0)
 
 
 def test_a_small_gap_up_within_threshold_is_confirmed() -> None:
@@ -64,6 +64,7 @@ def test_a_zero_reference_close_is_rejected_rather_than_dividing_by_zero() -> No
 
     assert result.verdict == EntryVerdict.REJECTED
     assert result.gap_pct == pytest.approx(0.0)
+    assert result.current_price == pytest.approx(100.0)
 
 
 def test_custom_thresholds_change_the_verdict() -> None:

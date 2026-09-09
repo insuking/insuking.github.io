@@ -65,6 +65,13 @@ class EntryConfirmation:
     symbol: str
     verdict: EntryVerdict
     gap_pct: float
+    current_price: float = 0.0
+    """The real, freshly-fetched quote `confirm_entry()` was called with -
+    kept on the verdict (P31) so a caller turning a CONFIRMED verdict
+    into an actual `Recommendation` (`app/stock_radar/recommendation.py`)
+    has the real entry-reference price without re-deriving it from
+    `gap_pct`/`reference_close` (equivalent, but indirect and needlessly
+    duplicates the arithmetic `confirm_entry()` already did)."""
     reasons: list[str] = field(default_factory=list)
 
 
@@ -84,6 +91,7 @@ def confirm_entry(
             symbol=score.symbol,
             verdict=EntryVerdict.REJECTED,
             gap_pct=0.0,
+            current_price=current_price,
             reasons=["reference_close is not a valid price - cannot measure a gap"],
         )
 
@@ -99,4 +107,6 @@ def confirm_entry(
         reasons.append("시장 국면이 RISK_OFF로 전환 - 신규 진입 보류")
 
     verdict = EntryVerdict.REJECTED if reasons else EntryVerdict.CONFIRMED
-    return EntryConfirmation(symbol=score.symbol, verdict=verdict, gap_pct=gap_pct, reasons=reasons)
+    return EntryConfirmation(
+        symbol=score.symbol, verdict=verdict, gap_pct=gap_pct, current_price=current_price, reasons=reasons
+    )

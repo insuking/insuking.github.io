@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from app.integrations.kis.errors import KisApiError
 from app.integrations.kis.rest_client import KisRestClient
-from app.models.domain import Candle
+from app.models.domain import Candle, Recommendation
 from app.radar.ranking import RadarFunnel, rank_candidates
 from app.radar.regime import MarketRegime
 from app.stock_radar.entry_confirmation import (
@@ -46,6 +46,7 @@ from app.stock_radar.entry_confirmation import (
     confirm_entry,
 )
 from app.stock_radar.investor_flow import InvestorFlowBar
+from app.stock_radar.recommendation import build_stock_recommendation
 from app.stock_radar.scoring import (
     DEFAULT_WEIGHTS,
     PreBreakoutScore,
@@ -180,3 +181,38 @@ async def reconfirm_candidates(
                 )
             )
     return confirmations
+
+
+async def build_confirmed_recommendations(
+    rest: KisRestClient,
+    scores: list[PreBreakoutScore],
+    confirmations: list[EntryConfirmation],
+    account_buying_power: float,
+    start_date: str,
+    end_date: str,
+) -> list[Recommendation]:
+    """P31's thin I/O wrapper: for each CONFIRMED verdict, fetch fresh
+    daily candles (`KisRestClient.get_daily_prices()` - already P23-
+    verified, no new endpoint risk) for `build_stock_recommendation()`'s
+    ATR-based stop, and turn it into a real `Recommendation`. Same
+    degrade-not-crash pattern as `reconfirm_candidates()`/
+    `scan_stock_universe()`: a candle fetch failing, or the builder
+    declining (insufficient history, invalid risk setup), just skips that
+    symbol rather than failing the whole batch.
+    """
+    scores_by_symbol = {s.symbol: s for s in scores}
+    recommendations: list[Recommendation] = []
+    for confirmation in confirmations:
+        if confirmation.verdict != EntryVerdict.CONFIRMED:
+            continue
+        score = scores_by_symbol.get(confirmation.symbol)
+        if score is None:
+            continue
+        try:
+            candles = await rest.get_daily_prices(confirmation.symbol, start_date, end_date)
+        except (KisApiError, KeyError, ValueError):
+            continue
+        rec = build_stock_recommendation(score, confirmation, candles, account_buying_power)
+        if rec is not None:
+            recommendations.append(rec)
+    return recommendations

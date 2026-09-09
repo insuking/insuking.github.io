@@ -277,3 +277,37 @@ to the expected row width, so they're evidence-based - but unlike this
 project's other KIS integrations, they haven't been proven against a real
 downloaded file yet. Re-verify the first time this runs somewhere with
 real network access to `new.real.download.dws.co.kr`.
+
+## CONFIRMED entry -> real Recommendation (추천 탭에 실제로 표시됨) - P31
+
+Until now, a CONFIRMED verdict from `scripts/reconfirm_entries.py` (P27)
+was printed to the console and discarded - nothing turned it into a real
+`Recommendation`, so a stock candidate never appeared on the 추천 탭 or
+Home's "TOP 추천" no matter how well it scored (CRYPTO recommendations
+already worked, via `scripts/scan_crypto.py`, which persists them
+directly). `app/stock_radar/recommendation.py`'s `build_stock_recommendation()`
+closes this gap, and `scripts/reconfirm_entries.py` now persists its
+output as real `Recommendation` rows (id-prefixed `stock-radar-%`,
+idempotent replace on every run, same pattern as `scan_crypto.py`'s
+`scan-crypto-%`).
+
+This does **not** reuse `app/recommendation/engine.py`'s `build_recommendation()`
+- that function was built for the crypto radar's intraday opening-range
+model (RVOL/CLV/structural stop from minute candles), none of which the
+stock radar computes (it scores from *daily* candles through compression/
+OBV/distance-to-high/institutional-flow instead - see
+`app/stock_radar/scoring.py`). Forcing a `PreBreakoutScore` through the
+crypto-shaped function would mean inventing numbers this project never
+computed. Instead: entry uses the real reconfirmed quote
+(`EntryConfirmation.current_price`), the stop is an ATR-multiple below
+entry (`atr_multiplier=2.0`/`atr_window=14`, the exact same convention
+`app/guardian/trailing.py` already uses for trailing stops, reused rather
+than invented), and the score is the PRE-BREAKOUT score itself, rescaled
+to the domain `Recommendation.score`'s 0-100 range rather than replaced
+with a differently-weighted one.
+
+`scripts/reconfirm_entries.py` needs one more real number this project has
+no account-balance integration for yet: `STOCK_SCAN_ACCOUNT_BUYING_POWER`
+(KRW) for position sizing - unset defaults to a clearly-fake 10,000,000
+placeholder (same pattern, same env-var-naming convention as
+`scan_crypto.py`'s `SCAN_ACCOUNT_BUYING_POWER`), with a printed warning.

@@ -13,15 +13,23 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
-
 from app.core.config import Settings
 from app.integrations.kis.auth import KisAuth
 from app.integrations.kis.rest_client import KisRestClient
 from app.models.domain import Candle
 from app.radar.regime import MarketRegime
-from app.stock_radar.entry_confirmation import EntryVerdict
-from app.stock_radar.scan import rank_prebreakout_candidates, reconfirm_candidates, scan_stock_universe
-from app.stock_radar.scoring import SCORE_MAX_AVAILABLE, SCORE_MAX_WITH_INSTITUTIONAL_FLOW, PreBreakoutScore
+from app.stock_radar.entry_confirmation import EntryConfirmation, EntryVerdict
+from app.stock_radar.scan import (
+    build_confirmed_recommendations,
+    rank_prebreakout_candidates,
+    reconfirm_candidates,
+    scan_stock_universe,
+)
+from app.stock_radar.scoring import (
+    SCORE_MAX_AVAILABLE,
+    SCORE_MAX_WITH_INSTITUTIONAL_FLOW,
+    PreBreakoutScore,
+)
 
 pytestmark = pytest.mark.P23
 
@@ -259,3 +267,81 @@ async def test_reconfirm_candidates_rejects_a_symbol_whose_quote_fetch_fails_wit
     assert len(confirmations) == 1
     assert confirmations[0].verdict == EntryVerdict.REJECTED
     assert confirmations[0].reasons
+
+
+def _daily_price_response(count: int, base: float = 100000.0) -> dict:
+    rows = []
+    for i in range(count):
+        date = (_START + timedelta(days=i)).strftime("%Y%m%d")
+        close = base + i * 100
+        rows.append(
+            {
+                "stck_bsop_date": date,
+                "stck_oprc": str(close),
+                "stck_hgpr": str(close + 1000),
+                "stck_lwpr": str(close - 1000),
+                "stck_clpr": str(close),
+                "acml_vol": "10000",
+            }
+        )
+    return {"rt_cd": "0", "output1": {}, "output2": rows}
+
+
+@pytest.mark.P31
+@pytest.mark.asyncio
+async def test_build_confirmed_recommendations_creates_one_per_confirmed_symbol() -> None:
+    settings = Settings(kis_app_key="test-key", kis_app_secret="test-secret")  # type: ignore[call-arg]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth2/tokenP":
+            return httpx.Response(200, json={"access_token": "test-token", "expires_in": 86400})
+        if request.url.path == "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice":
+            return httpx.Response(200, json=_daily_price_response(20))
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://mock.kis.test")
+    rest = KisRestClient(client, KisAuth(client=client, settings=settings))
+
+    scores = [
+        PreBreakoutScore(symbol="005930", total_score=40.0, max_available=65.0, reference_close=100000.0),
+        PreBreakoutScore(symbol="000660", total_score=30.0, max_available=65.0, reference_close=100000.0),
+    ]
+    confirmations = [
+        EntryConfirmation(symbol="005930", verdict=EntryVerdict.CONFIRMED, gap_pct=1.0, current_price=101000.0),
+        EntryConfirmation(symbol="000660", verdict=EntryVerdict.REJECTED, gap_pct=6.0, current_price=106000.0),
+    ]
+
+    recommendations = await build_confirmed_recommendations(
+        rest, scores, confirmations, account_buying_power=10_000_000.0, start_date="20260101", end_date="20260201"
+    )
+
+    assert len(recommendations) == 1
+    assert recommendations[0].symbol == "005930"
+    assert recommendations[0].entry_low == pytest.approx(101000.0)
+
+
+@pytest.mark.P31
+@pytest.mark.asyncio
+async def test_build_confirmed_recommendations_skips_symbol_on_candle_fetch_failure() -> None:
+    settings = Settings(kis_app_key="test-key", kis_app_secret="test-secret")  # type: ignore[call-arg]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth2/tokenP":
+            return httpx.Response(200, json={"access_token": "test-token", "expires_in": 86400})
+        if request.url.path == "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice":
+            return httpx.Response(200, json={"rt_cd": "1", "msg1": "조회 실패"})
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://mock.kis.test")
+    rest = KisRestClient(client, KisAuth(client=client, settings=settings))
+
+    scores = [PreBreakoutScore(symbol="005930", total_score=40.0, max_available=65.0, reference_close=100000.0)]
+    confirmations = [
+        EntryConfirmation(symbol="005930", verdict=EntryVerdict.CONFIRMED, gap_pct=1.0, current_price=101000.0)
+    ]
+
+    recommendations = await build_confirmed_recommendations(
+        rest, scores, confirmations, account_buying_power=10_000_000.0, start_date="20260101", end_date="20260201"
+    )
+
+    assert recommendations == []
