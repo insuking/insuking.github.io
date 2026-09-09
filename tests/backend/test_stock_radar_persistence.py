@@ -6,6 +6,8 @@ not just the pure scoring math `test_stock_radar_scoring.py` covers.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from sqlalchemy import delete, select
 
@@ -26,6 +28,7 @@ def _score(symbol: str, total: float) -> PreBreakoutScore:
         symbol=symbol,
         total_score=total,
         max_available=65.0,
+        reference_close=100.0,
         positive=[ScoreFactor("box_compression", 10.0, "변동폭이 최근 구간 중 상위 90%로 압축")],
         negative=[],
     )
@@ -66,6 +69,8 @@ async def test_persists_a_security_row_and_a_ranked_radar_score_row_per_symbol()
         assert by_symbol[_TEST_SYMBOL_B].rank == 2
         assert by_symbol[_TEST_SYMBOL_A].prebreakout_score == pytest.approx(40.0)
         assert "box_compression" in by_symbol[_TEST_SYMBOL_A].explanation
+        explanation = json.loads(by_symbol[_TEST_SYMBOL_A].explanation)
+        assert explanation["reference_close"] == pytest.approx(100.0)
 
 
 async def test_a_second_scan_run_updates_the_security_name_without_duplicating_it() -> None:

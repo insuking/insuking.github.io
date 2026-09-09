@@ -18,8 +18,10 @@ from app.core.config import Settings
 from app.integrations.kis.auth import KisAuth
 from app.integrations.kis.rest_client import KisRestClient
 from app.models.domain import Candle
-from app.stock_radar.scan import rank_prebreakout_candidates, scan_stock_universe
-from app.stock_radar.scoring import SCORE_MAX_AVAILABLE, SCORE_MAX_WITH_INSTITUTIONAL_FLOW
+from app.radar.regime import MarketRegime
+from app.stock_radar.entry_confirmation import EntryVerdict
+from app.stock_radar.scan import rank_prebreakout_candidates, reconfirm_candidates, scan_stock_universe
+from app.stock_radar.scoring import SCORE_MAX_AVAILABLE, SCORE_MAX_WITH_INSTITUTIONAL_FLOW, PreBreakoutScore
 
 pytestmark = pytest.mark.P23
 
@@ -203,3 +205,57 @@ async def test_scan_stock_universe_degrades_gracefully_when_investor_trend_fails
 
     assert len(results) == 1
     assert results[0].max_available == pytest.approx(SCORE_MAX_AVAILABLE)
+
+
+@pytest.mark.P27
+@pytest.mark.asyncio
+async def test_reconfirm_candidates_fetches_a_fresh_quote_per_symbol() -> None:
+    settings = Settings(kis_app_key="test-key", kis_app_secret="test-secret")  # type: ignore[call-arg]
+    quotes_by_symbol = {"005930": "103000", "000660": "94000"}  # 005930 gapped up 3%, 000660 gapped down 6%
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth2/tokenP":
+            return httpx.Response(200, json={"access_token": "test-token", "expires_in": 86400})
+        if request.url.path == "/uapi/domestic-stock/v1/quotations/inquire-price":
+            symbol = request.url.params["FID_INPUT_ISCD"]
+            return httpx.Response(
+                200, json={"rt_cd": "0", "output": {"stck_prpr": quotes_by_symbol[symbol], "acml_vol": "1000"}}
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://mock.kis.test")
+    rest = KisRestClient(client, KisAuth(client=client, settings=settings))
+    results = [
+        PreBreakoutScore(symbol="005930", total_score=40.0, max_available=65.0, reference_close=100000.0),
+        PreBreakoutScore(symbol="000660", total_score=30.0, max_available=65.0, reference_close=100000.0),
+    ]
+
+    confirmations = await reconfirm_candidates(rest, results, regime=MarketRegime.RISK_ON)
+
+    by_symbol = {c.symbol: c for c in confirmations}
+    assert by_symbol["005930"].verdict == EntryVerdict.CONFIRMED
+    assert by_symbol["000660"].verdict == EntryVerdict.REJECTED
+    assert by_symbol["000660"].gap_pct == pytest.approx(-6.0)
+
+
+@pytest.mark.P27
+@pytest.mark.asyncio
+async def test_reconfirm_candidates_rejects_a_symbol_whose_quote_fetch_fails_without_crashing() -> None:
+    settings = Settings(kis_app_key="test-key", kis_app_secret="test-secret")  # type: ignore[call-arg]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth2/tokenP":
+            return httpx.Response(200, json={"access_token": "test-token", "expires_in": 86400})
+        if request.url.path == "/uapi/domestic-stock/v1/quotations/inquire-price":
+            return httpx.Response(200, json={"rt_cd": "1", "msg1": "조회 실패", "output": {}})
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://mock.kis.test")
+    rest = KisRestClient(client, KisAuth(client=client, settings=settings))
+    results = [PreBreakoutScore(symbol="005930", total_score=40.0, max_available=65.0, reference_close=100000.0)]
+
+    confirmations = await reconfirm_candidates(rest, results, regime=MarketRegime.RISK_ON)
+
+    assert len(confirmations) == 1
+    assert confirmations[0].verdict == EntryVerdict.REJECTED
+    assert confirmations[0].reasons

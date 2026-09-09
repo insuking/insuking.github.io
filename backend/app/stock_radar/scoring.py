@@ -122,9 +122,17 @@ class ScoreFactor:
 
 @dataclass
 class PreBreakoutScore:
+    """`reference_close` - the last candle's close price this score was
+    computed from - is required, not defaulted: P27's `confirm_entry()`
+    needs it to measure how far a fresh quote has since gapped, and a
+    caller constructing a `PreBreakoutScore` by hand (rather than getting
+    one from `score_prebreakout()`) should have to think about what price
+    it was scored against, not silently get a 0.0 sentinel."""
+
     symbol: str
     total_score: float
     max_available: float
+    reference_close: float
     positive: list[ScoreFactor] = field(default_factory=list)
     negative: list[ScoreFactor] = field(default_factory=list)
     model_version: str = MODEL_VERSION
@@ -287,6 +295,7 @@ def score_prebreakout(
         symbol=symbol,
         total_score=total,
         max_available=max_available,
+        reference_close=candles[-1].close,
         positive=positive,
         negative=negative,
     )

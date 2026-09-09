@@ -1,4 +1,4 @@
-"""Stock radar scan orchestration (P23).
+"""Stock radar scan orchestration (P23, extended in P27).
 
 Wires the P23 scoring engine (`app/stock_radar/scoring.py`) into a ranked
 PRE-BREAKOUT candidate list - the stock-market analogue of
@@ -37,6 +37,14 @@ from app.integrations.kis.errors import KisApiError
 from app.integrations.kis.rest_client import KisRestClient
 from app.models.domain import Candle
 from app.radar.ranking import RadarFunnel, rank_candidates
+from app.radar.regime import MarketRegime
+from app.stock_radar.entry_confirmation import (
+    DEFAULT_THRESHOLDS,
+    EntryConfirmation,
+    EntryConfirmationThresholds,
+    EntryVerdict,
+    confirm_entry,
+)
 from app.stock_radar.investor_flow import InvestorFlowBar
 from app.stock_radar.scoring import (
     DEFAULT_WEIGHTS,
@@ -130,3 +138,43 @@ async def scan_stock_universe(
         symbol_candles, benchmark_candles, weights=weights, top_n=top_n, symbol_flow_bars=symbol_flow_bars
     )
     return results, names
+
+
+async def reconfirm_candidates(
+    rest: KisRestClient,
+    results: list[PreBreakoutScore],
+    regime: MarketRegime,
+    thresholds: EntryConfirmationThresholds = DEFAULT_THRESHOLDS,
+) -> list[EntryConfirmation]:
+    """P27's thin I/O wrapper: fetch one fresh quote per already-scored
+    candidate (via `KisRestClient.get_quote()` - already P3-verified, no
+    new endpoint risk here) and run each through `confirm_entry()`. A
+    quote fetch failing for one symbol degrades that symbol to REJECTED
+    with the failure as its reason, rather than crashing the whole
+    re-confirmation pass - matches `scan_stock_universe()`'s own
+    per-symbol degrade-not-crash pattern for `get_investor_trend()`.
+
+    This function's real-world correctness can only be judged during real
+    KRX trading hours - `get_quote()` returns whatever KIS's servers
+    currently report, and outside trading hours that's just the same
+    stale closing price `results` was already scored from, which would
+    make every gap read as ~0% and look "confirmed" for reasons that have
+    nothing to do with this logic actually working. See
+    `scripts/reconfirm_entries.py` for the real entrypoint and its own
+    warning about when running it actually proves anything.
+    """
+    confirmations: list[EntryConfirmation] = []
+    for score in results:
+        try:
+            quote = await rest.get_quote(score.symbol)
+            confirmations.append(confirm_entry(score, quote.price, regime, thresholds))
+        except (KisApiError, KeyError, ValueError) as exc:
+            confirmations.append(
+                EntryConfirmation(
+                    symbol=score.symbol,
+                    verdict=EntryVerdict.REJECTED,
+                    gap_pct=0.0,
+                    reasons=[f"실시간 시세 조회 실패: {exc!r}"],
+                )
+            )
+    return confirmations

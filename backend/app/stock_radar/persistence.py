@@ -7,7 +7,12 @@ history) - the DB schema (`app/db/models.py`'s `SecurityRow`/
 P23, this module is the part that actually writes to it.
 
 Scope: `securities` (upsert) and `radar_scores` (append one row per scored
-symbol per run) only. `radar_features` is deliberately NOT written here -
+symbol per run) only. `radar_scores.explanation`'s JSON blob also carries
+`reference_close` (P27's `confirm_entry()` needs it, and `radar_scores`
+has no dedicated price column - adding one would be a real schema change
+for one value already available as JSON, not worth it here) alongside the
+existing `max_available`/`positive`/`negative`. `radar_features` is
+deliberately NOT written here -
 `score_prebreakout()` only returns `ScoreFactor` entries for factors that
 crossed a display threshold (positive/negative), not every raw feature
 value `radar_features`' columns expect (e.g. `price_return_1d`,
@@ -90,6 +95,7 @@ async def persist_scan_results(
                 explanation=json.dumps(
                     {
                         "max_available": result.max_available,
+                        "reference_close": result.reference_close,
                         "positive": [asdict(f) for f in result.positive],
                         "negative": [asdict(f) for f in result.negative],
                     }
