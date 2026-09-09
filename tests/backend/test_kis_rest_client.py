@@ -75,6 +75,71 @@ async def test_get_quote_raises_on_non_zero_rt_cd() -> None:
         await rest.get_quote("BADCODE")
 
 
+@pytest.mark.asyncio
+async def test_get_quote_retries_a_real_rate_limit_response_and_succeeds() -> None:
+    """A real docker-compose run against real KIS servers tripped exactly
+    this (EGW00201, '초당 거래건수를 초과하였습니다') on the third
+    sequential get_daily_prices() call with nothing pacing requests - see
+    rest_client.py's module docstring. The retry must not surface it as a
+    hard failure when a later attempt succeeds."""
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        if request.url.path == "/oauth2/tokenP":
+            return httpx.Response(200, json={"access_token": "test-token", "expires_in": 86400})
+        calls += 1
+        if calls < 3:
+            return httpx.Response(
+                500, json={"rt_cd": "1", "msg_cd": "EGW00201", "msg1": "초당 거래건수를 초과하였습니다."}
+            )
+        return httpx.Response(200, json={"rt_cd": "0", "output": {"stck_prpr": "71000", "acml_vol": "100"}})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://mock.kis.test")
+    rest = KisRestClient(client, KisAuth(client=client, settings=_settings()), rate_limit_backoff_seconds=0.01)
+
+    quote = await rest.get_quote("005930")
+
+    assert quote.price == 71000.0
+    assert calls == 3
+
+
+@pytest.mark.asyncio
+async def test_get_quote_raises_after_exhausting_rate_limit_retries() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth2/tokenP":
+            return httpx.Response(200, json={"access_token": "test-token", "expires_in": 86400})
+        return httpx.Response(500, json={"rt_cd": "1", "msg_cd": "EGW00201", "msg1": "초당 거래건수를 초과하였습니다."})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://mock.kis.test")
+    rest = KisRestClient(client, KisAuth(client=client, settings=_settings()), rate_limit_backoff_seconds=0.01)
+
+    with pytest.raises(KisApiError):
+        await rest.get_quote("005930")
+
+
+@pytest.mark.asyncio
+async def test_throttle_paces_concurrent_requests_under_the_configured_rate() -> None:
+    import asyncio
+    import time
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth2/tokenP":
+            return httpx.Response(200, json={"access_token": "test-token", "expires_in": 86400})
+        return httpx.Response(200, json={"rt_cd": "0", "output": {"stck_prpr": "1", "acml_vol": "1"}})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://mock.kis.test")
+    rest = KisRestClient(client, KisAuth(client=client, settings=_settings()), max_requests_per_second=20.0)
+
+    start = time.monotonic()
+    await asyncio.gather(*(rest.get_quote("005930") for _ in range(5)))
+    elapsed = time.monotonic() - start
+
+    # 5 requests at 20/sec must take at least 4 intervals (0.2s) - a bug that
+    # skipped throttling for concurrent callers would finish near-instantly.
+    assert elapsed >= 0.19
+
+
 def _mock_daily_client(auth_body: dict, daily_body: dict, requests: list[httpx.Request] | None = None) -> httpx.AsyncClient:
     def handler(request: httpx.Request) -> httpx.Response:
         if requests is not None:

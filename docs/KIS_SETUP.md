@@ -67,9 +67,25 @@ if anything has drifted, `tests/backend/test_kis_parsing.py` is where to fix
 the field list.
 
 `KisRestClient.get_daily_prices()` (P23, `inquire-daily-itemchartprice`)
-carries the same caveat one level further: even the field names/response
-shape aren't independently verified this time (the docs portal and the
-GitHub sample repo were both unreachable while this was written - see that
-method's docstring), only matched against the endpoint's long-standing,
-widely-used public shape. Re-verify it against a real response before
-trusting anything P23's scoring engine derives from it in a real decision.
+carried the same caveat one level further when first written - the field
+names/response shape weren't independently verified (the docs portal and
+the GitHub sample repo were both unreachable at the time). **Update, real
+credentials configured (2026-09)**: a real docker-compose run got a
+successful response and parsed real daily candles for the first two
+symbols in `scripts/scan_stocks.py`'s default list before hitting a rate
+limit (see "Rate limit" below) - real evidence the field layout is
+correct, not yet a full multi-symbol/multi-day confirmation. If a future
+run finds a field mismatch, `tests/backend/test_kis_rest_client.py` and
+`rest_client.py`'s `_to_daily_candle()` are where to fix it.
+
+## Rate limit
+
+Confirmed by that same real run: unthrottled sequential `get_daily_prices()`
+calls tripped KIS's real per-second limit on the third request - HTTP 500
+with `{"rt_cd": "1", "msg_cd": "EGW00201", "msg1": "초당 거래건수를
+초과하였습니다"}`. `KisRestClient` now throttles every request to
+`max_requests_per_second` (default 2/sec - a conservative starting point,
+not a number KIS has published) and retries an `EGW00201` response with
+backoff instead of surfacing it as a hard failure. Tighten the default
+further if `EGW00201` still appears in practice, or raise it once a longer
+real run shows headroom.

@@ -12,19 +12,29 @@ So `exchange_ts` here is set equal to `received_ts` rather than fabricated;
 callers needing true exchange-vs-received latency should use the WS stream.
 
 `get_daily_prices()` (P23) is `inquire-daily-itemchartprice` - the field
-names and request params below are NOT independently verified this session
-(KIS's docs portal and `github.com/koreainvestment/open-trading-api` are
-both unreachable from this sandbox, and `KIS_APP_KEY`/`KIS_APP_SECRET`
-aren't provisioned yet - see docs/KIS_SETUP.md); they match the endpoint's
-long-standing, widely-used shape (the same one every open-source KIS client
-library targets), not a payload this session actually fetched. Re-verify
-against a real response the first time real credentials exist, the same
-"BLOCKED, not faked" discipline `test_kis_integration.py` already applies
-to `get_quote()`.
+names and request params were not independently verified when first
+written (KIS's docs portal and `github.com/koreainvestment/open-trading-api`
+were both unreachable from the sandbox that wrote them, and no credentials
+were provisioned yet). A real run against real KIS servers (2026-09, once
+credentials existed) got past auth and field parsing on the first two
+symbols before tripping the rate limit below - the strongest evidence yet
+that the field layout is in fact correct, though still not a full
+multi-symbol confirmation.
+
+**Rate limit** (confirmed by that same real run, not a guess like the
+"add one once needed" note this docstring used to carry): KIS returns
+HTTP 500 with `{"rt_cd": "1", "msg_cd": "EGW00201", "msg1": "초당
+거래건수를 초과하였습니다"}" ("per-second transaction count exceeded")
+under unthrottled sequential calls. `DEFAULT_MAX_REQUESTS_PER_SECOND`
+below is a conservative starting point, not a number confirmed as KIS's
+actual limit (that would need a documented rate this project still
+hasn't been able to fetch) - tune it down further if EGW00201 still
+appears, or up once a real multi-day run shows headroom.
 """
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -36,32 +46,33 @@ from app.models.domain import AssetType, Candle, Exchange, Market, Quote
 _TR_ID_CURRENT_PRICE = "FHKST01010100"
 _TR_ID_DAILY_CHART_PRICE = "FHKST03010100"
 
+_RATE_LIMIT_MSG_CD = "EGW00201"
+DEFAULT_MAX_REQUESTS_PER_SECOND = 2.0
+DEFAULT_RATE_LIMIT_BACKOFF_SECONDS = 1.0
+_MAX_RATE_LIMIT_RETRIES = 3
+
 
 class KisRestClient:
-    def __init__(self, client: httpx.AsyncClient, auth: KisAuth) -> None:
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        auth: KisAuth,
+        max_requests_per_second: float = DEFAULT_MAX_REQUESTS_PER_SECOND,
+        rate_limit_backoff_seconds: float = DEFAULT_RATE_LIMIT_BACKOFF_SECONDS,
+    ) -> None:
         self._client = client
         self._auth = auth
+        self._min_request_interval = 1.0 / max_requests_per_second
+        self._rate_limit_backoff_seconds = rate_limit_backoff_seconds
+        self._throttle_lock = asyncio.Lock()
+        self._next_allowed_at = 0.0
 
     async def get_quote(self, symbol: str, market: Market = Market.KOSPI) -> Quote:
-        token = await self._auth.get_access_token()
-        response = await self._client.get(
+        body = await self._get(
             "/uapi/domestic-stock/v1/quotations/inquire-price",
-            headers={
-                "authorization": f"Bearer {token}",
-                "appkey": self._auth.settings.kis_app_key,
-                "appsecret": self._auth.settings.kis_app_secret,
-                "tr_id": _TR_ID_CURRENT_PRICE,
-                "custtype": "P",
-            },
-            params={
-                "FID_COND_MRKT_DIV_CODE": "J",
-                "FID_INPUT_ISCD": symbol,
-            },
+            _TR_ID_CURRENT_PRICE,
+            {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": symbol},
         )
-        body = response.json()
-        if response.status_code != 200 or body.get("rt_cd") != "0":
-            raise KisApiError(f"KIS inquire-price failed for {symbol}: {response.status_code} {body}")
-
         output = body["output"]
         now = datetime.now(UTC)
         return Quote(
@@ -83,24 +94,14 @@ class KisRestClient:
         """Daily OHLCV between `start_date`/`end_date` (`YYYYMMDD`, KIS's own
         date format for this endpoint), returned chronological (oldest
         first) - matching Upbit's `get_daily_candles()` convention in this
-        codebase even though KIS's own raw response order isn't
-        independently confirmed here (see module docstring); reversing an
-        already-ascending response is a no-op, so this is the safe default
-        either way, and callers should treat the very first
-        `get_daily_prices()` result as an explicit thing to re-check once
-        real credentials exist.
+        codebase; a real run confirmed KIS also returns most-recent-first
+        for this endpoint, so the sort below is doing real work, not a
+        no-op.
         """
-        token = await self._auth.get_access_token()
-        response = await self._client.get(
+        body = await self._get(
             "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
-            headers={
-                "authorization": f"Bearer {token}",
-                "appkey": self._auth.settings.kis_app_key,
-                "appsecret": self._auth.settings.kis_app_secret,
-                "tr_id": _TR_ID_DAILY_CHART_PRICE,
-                "custtype": "P",
-            },
-            params={
+            _TR_ID_DAILY_CHART_PRICE,
+            {
                 "FID_COND_MRKT_DIV_CODE": "J",
                 "FID_INPUT_ISCD": symbol,
                 "FID_INPUT_DATE_1": start_date,
@@ -109,16 +110,54 @@ class KisRestClient:
                 "FID_ORG_ADJ_PRC": "0" if adjusted else "1",
             },
         )
-        body = response.json()
-        if response.status_code != 200 or body.get("rt_cd") != "0":
-            raise KisApiError(
-                f"KIS inquire-daily-itemchartprice failed for {symbol}: {response.status_code} {body}"
-            )
-
         rows = body.get("output2", [])
         candles = [self._to_daily_candle(row, symbol) for row in rows if row.get("stck_bsop_date")]
         candles.sort(key=lambda c: c.open_time)
         return candles
+
+    async def _throttle(self) -> None:
+        """Pace outgoing requests to at most `max_requests_per_second`,
+        regardless of how many callers are dispatching concurrently - same
+        shape as `UpbitRestClient._throttle()`, now grounded in KIS's own
+        confirmed EGW00201 rate-limit response rather than Upbit's 429."""
+        async with self._throttle_lock:
+            now = asyncio.get_event_loop().time()
+            wait = self._next_allowed_at - now
+            if wait > 0:
+                await asyncio.sleep(wait)
+                now = self._next_allowed_at
+            self._next_allowed_at = max(now, self._next_allowed_at) + self._min_request_interval
+
+    async def _get(self, path: str, tr_id: str, params: dict[str, str]) -> dict:
+        response: httpx.Response | None = None
+        body: dict = {}
+        for attempt in range(_MAX_RATE_LIMIT_RETRIES + 1):
+            await self._throttle()
+            token = await self._auth.get_access_token()
+            response = await self._client.get(
+                path,
+                headers={
+                    "authorization": f"Bearer {token}",
+                    "appkey": self._auth.settings.kis_app_key,
+                    "appsecret": self._auth.settings.kis_app_secret,
+                    "tr_id": tr_id,
+                    "custtype": "P",
+                },
+                params=params,
+            )
+            try:
+                body = response.json()
+            except ValueError:
+                body = {}
+            if body.get("msg_cd") == _RATE_LIMIT_MSG_CD and attempt < _MAX_RATE_LIMIT_RETRIES:
+                await asyncio.sleep(self._rate_limit_backoff_seconds * (attempt + 1))
+                continue
+            break
+        assert response is not None  # loop always runs at least once
+
+        if response.status_code != 200 or body.get("rt_cd") != "0":
+            raise KisApiError(f"KIS {tr_id} failed: {response.status_code} {body}")
+        return body
 
     def _to_daily_candle(self, row: dict, symbol: str) -> Candle:
         trade_date = datetime.strptime(row["stck_bsop_date"], "%Y%m%d").replace(tzinfo=UTC)
