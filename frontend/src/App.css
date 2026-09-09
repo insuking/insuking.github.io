@@ -61,6 +61,20 @@
   background: var(--color-surface);
   border-radius: var(--radius-lg);
   padding: 18px 20px;
+  box-shadow: var(--shadow-card);
+  transition:
+    box-shadow 0.2s var(--ease-standard),
+    transform 0.2s var(--ease-standard);
+}
+
+/* `hover: hover` excludes touchscreens, where a tap leaves :hover "stuck"
+   until the next tap elsewhere - the lift should only ever show on a
+   real pointer that can also leave. */
+@media (hover: hover) and (pointer: fine) {
+  .card:hover {
+    box-shadow: var(--shadow-card-hover);
+    transform: translateY(-2px);
+  }
 }
 
 .card-row {
@@ -93,16 +107,29 @@
   font-size: 1rem;
   font-weight: 700;
   margin-top: 8px;
-  transition: background-color 0.15s ease;
+  box-shadow: var(--shadow-primary);
+  transition:
+    background-color 0.15s ease,
+    box-shadow 0.2s var(--ease-standard),
+    transform 0.12s var(--ease-standard);
 }
 
-.cta:active {
+@media (hover: hover) and (pointer: fine) {
+  .cta:not(:disabled):hover {
+    box-shadow: var(--shadow-primary-hover);
+  }
+}
+
+.cta:active:not(:disabled) {
   background: var(--color-primary-dark);
+  box-shadow: var(--shadow-primary);
+  transform: scale(0.98);
 }
 
 .cta:disabled {
   background: var(--color-border);
   color: var(--color-text-tertiary);
+  box-shadow: none;
 }
 
 .pnl-gain {

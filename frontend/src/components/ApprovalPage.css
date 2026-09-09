@@ -55,6 +55,7 @@
   background: var(--color-surface);
   border-radius: var(--radius-lg);
   padding: 18px 20px;
+  box-shadow: var(--shadow-card);
 }
 
 .approval-page__cell {
@@ -82,6 +83,7 @@
   background: var(--color-surface);
   border-radius: var(--radius-lg);
   padding: 16px 18px;
+  box-shadow: var(--shadow-card);
 }
 
 .approval-page__details-title {
@@ -105,6 +107,7 @@
   border-radius: var(--radius-lg);
   padding: 16px 18px;
   font-size: 0.85rem;
+  box-shadow: var(--shadow-danger);
 }
 
 .approval-page__execution-notice .approval-page__details-title {
@@ -127,6 +130,7 @@
   background: var(--color-surface);
   border-radius: var(--radius-md);
   padding: 14px;
+  box-shadow: var(--shadow-card);
 }
 
 .approval-page__input {
@@ -157,19 +161,47 @@
   color: var(--color-text);
   font-size: 0.95rem;
   font-weight: 700;
+  transition:
+    background-color 0.15s ease,
+    box-shadow 0.2s var(--ease-standard),
+    transform 0.12s var(--ease-standard);
+}
+
+.approval-page__cta:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
 .approval-page__cta--primary {
   background: var(--color-primary);
   color: white;
+  box-shadow: var(--shadow-primary);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .approval-page__cta--primary:not(:disabled):hover {
+    box-shadow: var(--shadow-primary-hover);
+  }
+}
+
+.approval-page__cta--primary:active:not(:disabled) {
+  background: var(--color-primary-dark);
+  box-shadow: var(--shadow-primary);
 }
 
 .approval-page__cta--danger {
   background: var(--color-danger-tint);
   color: var(--color-danger);
+  box-shadow: var(--shadow-danger);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .approval-page__cta--danger:not(:disabled):hover {
+    box-shadow: var(--shadow-danger-hover);
+  }
 }
 
 .approval-page__cta:disabled {
   background: var(--color-border);
   color: var(--color-text-tertiary);
+  box-shadow: none;
 }

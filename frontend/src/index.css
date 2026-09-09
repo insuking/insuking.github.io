@@ -10,10 +10,11 @@
   color-scheme: light;
 
   /* Toss-style design tokens - a flat, high-contrast light theme: soft
-     gray page background, pure-white cards separated by color rather than
-     borders/heavy shadows, one saturated brand blue, and the Korean
-     financial-app convention for gain/loss (RED = up/gain, BLUE = down/
-     loss - the opposite of the US convention, and what Toss itself uses). */
+     gray page background, pure-white cards separated by color and a soft
+     ambient shadow rather than borders/heavy drop shadows, one saturated
+     brand blue, and the Korean financial-app convention for gain/loss
+     (RED = up/gain, BLUE = down/loss - the opposite of the US convention,
+     and what Toss itself uses). */
   --color-bg: #f2f4f6;
   --color-surface: #ffffff;
   --color-surface-muted: #f7f8fa;
@@ -41,6 +42,22 @@
   --radius-md: 16px;
   --radius-sm: 10px;
   --radius-pill: 999px;
+
+  /* Two-layer ambient shadows (a tight, low-opacity contact shadow plus a
+     wider, softer glow) rather than one hard drop shadow - the standard
+     Toss/fintech-app "floating card" look. `--shadow-*-hover` is a deeper
+     version of the same pair for the lifted state, not a different style,
+     so hover reads as "the same card, closer" rather than a new effect.
+     `--shadow-primary`/`--shadow-danger` tint the glow with the button's
+     own color (a common fintech pattern - a blue CTA casts a faint blue
+     glow) instead of a neutral gray shadow. */
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04), 0 6px 16px rgba(15, 23, 42, 0.05);
+  --shadow-card-hover: 0 4px 10px rgba(15, 23, 42, 0.07), 0 14px 32px rgba(15, 23, 42, 0.1);
+  --shadow-primary: 0 6px 16px rgba(49, 130, 246, 0.28);
+  --shadow-primary-hover: 0 8px 22px rgba(49, 130, 246, 0.36);
+  --shadow-danger: 0 6px 16px rgba(240, 68, 82, 0.2);
+  --shadow-danger-hover: 0 8px 20px rgba(240, 68, 82, 0.26);
+  --ease-standard: cubic-bezier(0.16, 1, 0.3, 1);
 
   --font-family:
     "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI",

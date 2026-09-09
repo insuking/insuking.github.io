@@ -19,6 +19,13 @@
   padding: 8px 2px 6px;
   text-decoration: none;
   color: var(--color-text-tertiary);
+  transition:
+    color 0.15s ease,
+    transform 0.12s var(--ease-standard);
+}
+
+.nav-bar__item:active {
+  transform: scale(0.92);
 }
 
 .nav-bar__icon {
