@@ -29,6 +29,16 @@ response from this project's own credentials, unlike the benchmark above.
 `scan_stock_universe()` degrades that one symbol back to the 65-point
 price/volume-only ceiling (rather than crashing the scan) if the call
 fails - see that function's docstring.
+
+**Market regime** (P26): prints the KOSPI regime via the existing P4
+`classify_market_regime()` (the same function crypto's BTC-based regime
+already reuses, see app/radar/crypto_features.py) against the real KOSPI
+benchmark - no new logic needed, it already takes any index candle series.
+Informational only here: RISK_OFF doesn't change any symbol's score, since
+"is this a good setup" (radar) and "should I trade at all right now"
+(entry filter) are deliberately separate per the master spec - the
+approval flow (`app/approval/revalidation.py`) is where RISK_OFF actually
+blocks something.
 """
 
 from __future__ import annotations
@@ -47,6 +57,7 @@ from app.integrations.kis.auth import KisAuth
 from app.integrations.kis.errors import KisApiError
 from app.integrations.kis.rest_client import KOSPI_INDEX_CODE, KisRestClient
 from app.models.domain import Candle
+from app.radar.regime import MarketRegime, classify_market_regime
 from app.stock_radar.scan import scan_stock_universe
 
 _DEFAULT_SYMBOLS = [
@@ -105,6 +116,14 @@ async def run() -> None:
                 "See KisRestClient.get_index_daily_prices()'s docstring.\n"
             )
             benchmark_candles = _flat_benchmark(_HISTORY_DAYS)
+
+        regime = classify_market_regime(benchmark_candles)
+        regime_label = {
+            MarketRegime.RISK_ON: "RISK_ON (상승 추세 - 돌파 시도에 우호적)",
+            MarketRegime.RISK_OFF: "RISK_OFF (하락 추세 - 신규 진입에 비우호적)",
+            MarketRegime.NEUTRAL: "NEUTRAL (혼조 - 방향성 불명확)",
+        }[regime]
+        print(f"시장 상황 (KOSPI 기준): {regime_label}\n")
 
         results, names = await scan_stock_universe(
             rest,
