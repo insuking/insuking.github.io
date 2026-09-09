@@ -139,6 +139,20 @@ def test_build_recommendation_computes_entry_stop_targets_and_sizing() -> None:
     assert rec.expected_max_loss == pytest.approx(10_000_000.0 * 0.01)
 
 
+@pytest.mark.P33
+def test_build_recommendation_carries_display_name_when_given() -> None:
+    rec = build_recommendation(_inputs(name="비트코인"))
+    assert rec is not None
+    assert rec.name == "비트코인"
+
+
+@pytest.mark.P33
+def test_build_recommendation_name_defaults_to_none_not_fabricated() -> None:
+    rec = build_recommendation(_inputs())
+    assert rec is not None
+    assert rec.name is None
+
+
 def test_build_recommendation_sets_ttl_from_created_at() -> None:
     rec = build_recommendation(_inputs(ttl_seconds=120))
     assert rec is not None

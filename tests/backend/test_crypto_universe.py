@@ -32,6 +32,28 @@ async def test_get_krw_market_universe_filters_to_krw_prefix() -> None:
     assert universe == ["KRW-BTC", "KRW-ETH"]
 
 
+@pytest.mark.asyncio
+@pytest.mark.P33
+async def test_get_krw_market_names_maps_market_to_korean_name() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[
+                {"market": "KRW-BTC", "korean_name": "비트코인"},
+                {"market": "KRW-ETH", "korean_name": "이더리움"},
+                {"market": "BTC-ETH", "korean_name": "이더리움"},  # non-KRW market, must be dropped
+                {"market": "KRW-NONAME"},  # no korean_name at all - must be omitted, not fabricated
+            ],
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://mock.upbit.test")
+    rest = UpbitRestClient(client)
+
+    names = await rest.get_krw_market_names()
+
+    assert names == {"KRW-BTC": "비트코인", "KRW-ETH": "이더리움"}
+
+
 def test_top200_30_5_funnel_reuses_p4_ranking_for_a_crypto_universe() -> None:
     """No crypto-specific ranking code exists (or should exist) - P4's
     generic (symbol, score) funnel is the whole implementation here too.

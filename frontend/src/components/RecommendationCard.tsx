@@ -41,7 +41,8 @@ export function RecommendationCard({ recommendation, onApprove }: Recommendation
     <article className="rec-card" data-testid="recommendation-card">
       <header className="rec-card__header">
         <div>
-          <span className="rec-card__symbol">{recommendation.symbol}</span>
+          <span className="rec-card__symbol">{recommendation.name ?? recommendation.symbol}</span>
+          {recommendation.name && <span className="rec-card__code">{recommendation.symbol}</span>}
           <span className="rec-card__state">
             {STATE_LABEL[recommendation.state] ?? recommendation.state}
           </span>
@@ -61,15 +62,15 @@ export function RecommendationCard({ recommendation, onApprove }: Recommendation
           <span className="rec-card__value">{formatWon(recommendation.stop_price)}</span>
         </div>
         <div className="rec-card__cell">
-          <span className="rec-card__label">T1 ({recommendation.t1_percent}%)</span>
+          <span className="rec-card__label">1차 익절 T1 ({recommendation.t1_percent}%)</span>
           <span className="rec-card__value">{formatWon(recommendation.t1_price)}</span>
         </div>
         <div className="rec-card__cell">
-          <span className="rec-card__label">T2 ({recommendation.t2_percent}%)</span>
+          <span className="rec-card__label">2차 익절 T2 ({recommendation.t2_percent}%)</span>
           <span className="rec-card__value">{formatWon(recommendation.t2_price)}</span>
         </div>
         <div className="rec-card__cell rec-card__cell--wide">
-          <span className="rec-card__label">Runner</span>
+          <span className="rec-card__label">잔여 추적 보유 Runner</span>
           <span className="rec-card__value">{recommendation.runner_percent}%</span>
         </div>
       </div>

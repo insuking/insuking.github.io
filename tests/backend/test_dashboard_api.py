@@ -192,6 +192,42 @@ async def test_summary_top_opportunities_excludes_expired_recommendations() -> N
     assert "dash-rec-expired" not in ids
 
 
+@pytest.mark.P33
+async def test_summary_top_opportunities_carries_the_recommendation_name() -> None:
+    now = datetime.now(UTC)
+    async with session_scope() as session:
+        session.add(
+            RecommendationRow(
+                id="dash-rec-named",
+                symbol=_SYMBOL,
+                name="테스트코인",
+                asset_type="CRYPTO",
+                score=99.0,
+                state="CONFIRMED_BREAKOUT",
+                entry_low=100.0,
+                entry_high=101.0,
+                stop_price=95.0,
+                t1_price=105.0,
+                t1_percent=30.0,
+                t2_price=110.0,
+                t2_percent=30.0,
+                runner_percent=40.0,
+                expected_max_loss=50.0,
+                risk_reward=2.0,
+                reasons="[]",
+                risks="[]",
+                created_at=now,
+                expires_at=now + timedelta(minutes=10),
+            )
+        )
+        await session.commit()
+
+    async with await _client() as client:
+        response = await client.get("/api/dashboard/summary")
+    by_id = {r["id"]: r for r in response.json()["top_opportunities"]}
+    assert by_id["dash-rec-named"]["name"] == "테스트코인"
+
+
 async def test_summary_btc_regime_computed_from_real_candles() -> None:
     now = datetime.now(UTC)
     async with session_scope() as session:

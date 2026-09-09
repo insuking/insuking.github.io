@@ -61,6 +61,7 @@ def _to_recommendation(row: RecommendationRow) -> Recommendation:
     return Recommendation(
         id=row.id,
         symbol=row.symbol,
+        name=row.name,
         asset_type=AssetType(row.asset_type),
         score=row.score,
         state=row.state,

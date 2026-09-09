@@ -14,7 +14,7 @@ from sqlalchemy import delete, select
 from app.db.models import RadarScoreRow, SecurityRow
 from app.db.session import session_scope
 from app.models.domain import Market
-from app.stock_radar.persistence import persist_scan_results
+from app.stock_radar.persistence import get_security_names, persist_scan_results
 from app.stock_radar.scoring import PreBreakoutScore, ScoreFactor
 
 pytestmark = [pytest.mark.P23, pytest.mark.asyncio]
@@ -92,6 +92,27 @@ async def test_a_second_scan_run_updates_the_security_name_without_duplicating_i
         # two separate scan runs, each append-only - never overwritten in place.
         assert len(all_scores) == 2
         assert any(s.scan_run_id == run_id_2 for s in all_scores)
+
+
+@pytest.mark.P33
+async def test_get_security_names_reads_back_what_persist_scan_results_wrote() -> None:
+    async with session_scope() as session:
+        await persist_scan_results(
+            session,
+            [_score(_TEST_SYMBOL_A, 40.0), _score(_TEST_SYMBOL_B, 20.0)],
+            {_TEST_SYMBOL_A: "테스트종목A", _TEST_SYMBOL_B: "테스트종목B"},
+            market=Market.KOSPI,
+        )
+
+        names = await get_security_names(session, [_TEST_SYMBOL_A, _TEST_SYMBOL_B, "TEST-NEVER-SCANNED"])
+
+        assert names == {_TEST_SYMBOL_A: "테스트종목A", _TEST_SYMBOL_B: "테스트종목B"}
+
+
+@pytest.mark.P33
+async def test_get_security_names_empty_symbols_list_returns_empty_without_a_query() -> None:
+    async with session_scope() as session:
+        assert await get_security_names(session, []) == {}
 
 
 async def test_generates_a_scan_run_id_when_none_is_supplied() -> None:

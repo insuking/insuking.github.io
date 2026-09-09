@@ -318,6 +318,41 @@ async def test_build_confirmed_recommendations_creates_one_per_confirmed_symbol(
     assert len(recommendations) == 1
     assert recommendations[0].symbol == "005930"
     assert recommendations[0].entry_low == pytest.approx(101000.0)
+    assert recommendations[0].name is None  # no `names` dict passed - never fabricated
+
+
+@pytest.mark.P33
+@pytest.mark.asyncio
+async def test_build_confirmed_recommendations_carries_names_through_when_given() -> None:
+    settings = Settings(kis_app_key="test-key", kis_app_secret="test-secret")  # type: ignore[call-arg]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth2/tokenP":
+            return httpx.Response(200, json={"access_token": "test-token", "expires_in": 86400})
+        if request.url.path == "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice":
+            return httpx.Response(200, json=_daily_price_response(20))
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://mock.kis.test")
+    rest = KisRestClient(client, KisAuth(client=client, settings=settings))
+
+    scores = [PreBreakoutScore(symbol="005930", total_score=40.0, max_available=65.0, reference_close=100000.0)]
+    confirmations = [
+        EntryConfirmation(symbol="005930", verdict=EntryVerdict.CONFIRMED, gap_pct=1.0, current_price=101000.0)
+    ]
+
+    recommendations = await build_confirmed_recommendations(
+        rest,
+        scores,
+        confirmations,
+        account_buying_power=10_000_000.0,
+        start_date="20260101",
+        end_date="20260201",
+        names={"005930": "삼성전자"},
+    )
+
+    assert len(recommendations) == 1
+    assert recommendations[0].name == "삼성전자"
 
 
 @pytest.mark.P31

@@ -190,6 +190,7 @@ async def build_confirmed_recommendations(
     account_buying_power: float,
     start_date: str,
     end_date: str,
+    names: dict[str, str] | None = None,
 ) -> list[Recommendation]:
     """P31's thin I/O wrapper: for each CONFIRMED verdict, fetch fresh
     daily candles (`KisRestClient.get_daily_prices()` - already P23-
@@ -199,8 +200,15 @@ async def build_confirmed_recommendations(
     `scan_stock_universe()`: a candle fetch failing, or the builder
     declining (insufficient history, invalid risk setup), just skips that
     symbol rather than failing the whole batch.
+
+    `names` (P33, optional): symbol -> Korean company name, passed straight
+    through to `build_stock_recommendation()`'s own `name` param. Omitted
+    entirely (the default) rather than defaulted to `{}` inline, so a
+    caller that has no name source is explicit about it rather than
+    silently getting `None` names for a reason buried in this function.
     """
     scores_by_symbol = {s.symbol: s for s in scores}
+    names = names or {}
     recommendations: list[Recommendation] = []
     for confirmation in confirmations:
         if confirmation.verdict != EntryVerdict.CONFIRMED:
@@ -212,7 +220,9 @@ async def build_confirmed_recommendations(
             candles = await rest.get_daily_prices(confirmation.symbol, start_date, end_date)
         except (KisApiError, KeyError, ValueError):
             continue
-        rec = build_stock_recommendation(score, confirmation, candles, account_buying_power)
+        rec = build_stock_recommendation(
+            score, confirmation, candles, account_buying_power, name=names.get(confirmation.symbol)
+        )
         if rec is not None:
             recommendations.append(rec)
     return recommendations

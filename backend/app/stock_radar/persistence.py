@@ -109,6 +109,22 @@ async def persist_scan_results(
     return run_id
 
 
+async def get_security_names(session: AsyncSession, symbols: list[str]) -> dict[str, str]:
+    """symbol -> Korean name for whichever of `symbols` have a `SecurityRow`
+    (P33) - written by this same module's `persist_scan_results()` above, so
+    a symbol scored in the run that produced `symbols` always has one by the
+    time this is called. A symbol somehow missing one is just omitted, not
+    defaulted to something fabricated - callers fall back to the symbol
+    itself for display.
+    """
+    if not symbols:
+        return {}
+    rows = (
+        await session.execute(select(SecurityRow).where(SecurityRow.symbol.in_(symbols)))
+    ).scalars().all()
+    return {row.symbol: row.name for row in rows}
+
+
 async def get_latest_scan(session: AsyncSession) -> list[RadarScoreRow]:
     """The most recent `scan_run_id`'s `RadarScoreRow` rows, ordered by
     rank - shared by `scripts/reconfirm_entries.py` (P27) and the

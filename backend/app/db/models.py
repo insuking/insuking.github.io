@@ -102,6 +102,7 @@ class Recommendation(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     symbol: Mapped[str] = mapped_column(String, index=True)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
     asset_type: Mapped[str] = mapped_column(String)
     score: Mapped[float] = mapped_column(Float)
     state: Mapped[str] = mapped_column(String)

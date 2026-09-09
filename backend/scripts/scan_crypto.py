@@ -73,6 +73,7 @@ async def run() -> None:
                 RecommendationRow(
                     id=f"scan-crypto-{i}",
                     symbol=rec.symbol,
+                    name=rec.name,
                     asset_type=rec.asset_type.value,
                     score=rec.score,
                     state=rec.state,

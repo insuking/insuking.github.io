@@ -150,6 +150,7 @@ class Signal(DomainModel):
 class Recommendation(DomainModel):
     id: str
     symbol: str
+    name: str | None = None
     asset_type: AssetType
     score: float = Field(ge=0, le=100)
     state: str

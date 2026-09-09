@@ -70,6 +70,29 @@ class UpbitRestClient:
         data = await self._get("/v1/market/all", params={"isDetails": "false"})
         return [item["market"] for item in data if item["market"].startswith("KRW-")]
 
+    async def get_krw_market_names(self) -> dict[str, str]:
+        """`market` -> Korean display name (e.g. `"KRW-BTC"` -> `"비트코인"`),
+        from the same `/v1/market/all` response `get_krw_market_universe()`
+        already reads - a second call to the same cheap, unauthenticated
+        endpoint rather than threading a combined return type through both
+        methods' existing, separately-tested callers (P33).
+
+        Unlike `market` itself, `korean_name` was **not** independently
+        verified against `pyupbit`'s source the way `get_krw_market_universe()`
+        was (see docs/UPBIT_NOTES.md) - it's a long-stable, extremely
+        widely-documented field of this same endpoint, used with high
+        confidence, but re-check against a real payload before relying on it
+        for anything beyond display text. A symbol missing `korean_name` in
+        the response is simply omitted here, not defaulted to something
+        fabricated - callers fall back to the market code itself.
+        """
+        data = await self._get("/v1/market/all", params={"isDetails": "false"})
+        return {
+            item["market"]: item["korean_name"]
+            for item in data
+            if item["market"].startswith("KRW-") and item.get("korean_name")
+        }
+
     async def get_ticker_price(self, market: str) -> float:
         data = await self._get("/v1/ticker", params={"markets": market})
         return float(data[0]["trade_price"])

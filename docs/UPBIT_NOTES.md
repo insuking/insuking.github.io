@@ -62,6 +62,12 @@ payload before depending on them for anything money-moving:
   above, per the same long-documented-but-not-independently-verified
   convention.
 - Error envelope: `{"error": {"name": ..., "message": ...}}`.
+- `GET /v1/market/all`'s `korean_name` field (used by
+  `get_krw_market_names()`, P33, for a human-readable display name
+  alongside a market code like `KRW-BTC`) - `pyupbit`'s `get_tickers()`
+  only reads/verifies the `market` field, not `korean_name`. Same
+  confidence level as the rest of this list: long-documented, not
+  independently confirmed.
 - **Rate limit**: a real docker-compose run against the live API (the
   first real connection this project ever verified - see "Re-verifying"
   below) tripped a 429 almost immediately once `crypto_scan.py` fanned out

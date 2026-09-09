@@ -64,6 +64,7 @@ def build_stock_recommendation(
     confirmation: EntryConfirmation,
     recent_candles: list[Candle],
     account_buying_power: float,
+    name: str | None = None,
     atr_window: int = DEFAULT_ATR_WINDOW,
     atr_stop_multiple: float = DEFAULT_ATR_STOP_MULTIPLE,
     risk_per_trade: float = DEFAULT_RISK_PER_TRADE,
@@ -77,6 +78,10 @@ def build_stock_recommendation(
     `atr_window` real bars yet; or the resulting stop isn't strictly below
     entry (an invalid or degenerate risk setup) - same never-fabricate
     gating `app.recommendation.engine.build_recommendation()` already uses.
+    `name` (P33): the KOSPI/KOSDAQ Korean company name for display (e.g.
+    "삼성전자") - already known by the time a symbol is CONFIRMED (KIS
+    returned it during the original scan, see `scan_stock_universe()`'s
+    `names` dict), threaded through here rather than re-fetched.
     """
     if confirmation.verdict != EntryVerdict.CONFIRMED:
         return None
@@ -118,6 +123,7 @@ def build_stock_recommendation(
     return Recommendation(
         id=f"stock-radar-{score.symbol}",
         symbol=score.symbol,
+        name=name,
         asset_type=AssetType.STOCK,
         score=round(normalized_score, 1),
         state="CONFIRMED_BREAKOUT",

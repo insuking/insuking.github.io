@@ -121,6 +121,7 @@ async def scan_crypto_market(
     if not universe:
         return []
 
+    names = await rest.get_krw_market_names()
     summaries = await rest.get_tickers_summary(universe)
     by_liquidity = sorted(summaries, key=lambda s: s.acc_trade_price_24h, reverse=True)
     candidate_markets = [s.market for s in by_liquidity if s.market != BENCHMARK_MARKET][
@@ -158,6 +159,7 @@ async def scan_crypto_market(
         inputs = RecommendationInputs(
             symbol=scanned.market,
             asset_type=AssetType.CRYPTO,
+            name=names.get(scanned.market),
             price=scanned.price,
             breakout_level=scanned.breakout_level,
             structural_stop=scanned.structural_stop,

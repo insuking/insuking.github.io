@@ -126,6 +126,17 @@ async def test_scan_returns_recommendations_only_for_eligible_breakout_candidate
 
 
 @pytest.mark.asyncio
+@pytest.mark.P33
+async def test_scan_carries_the_korean_display_name_onto_each_recommendation() -> None:
+    recs = await scan_crypto_market(_rest_client(), account_buying_power=10_000_000.0)
+
+    assert recs  # sanity - at least one eligible candidate exists in this fixture
+    for rec in recs:
+        # the fixture handler sets korean_name == market for every symbol
+        assert rec.name == rec.symbol
+
+
+@pytest.mark.asyncio
 async def test_scan_ranks_the_stronger_breakout_first() -> None:
     recs = await scan_crypto_market(_rest_client(), account_buying_power=10_000_000.0)
 

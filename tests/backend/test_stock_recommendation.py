@@ -106,6 +106,22 @@ def test_builds_recommendation_with_atr_based_stop_and_real_reasons() -> None:
     assert result.expires_at > result.created_at
 
 
+@pytest.mark.P33
+def test_carries_display_name_when_given() -> None:
+    result = build_stock_recommendation(
+        _score(), _confirmation(), _candles(20), account_buying_power=10_000_000.0, name="삼성전자"
+    )
+    assert result is not None
+    assert result.name == "삼성전자"
+
+
+@pytest.mark.P33
+def test_name_defaults_to_none_not_fabricated() -> None:
+    result = build_stock_recommendation(_score(), _confirmation(), _candles(20), account_buying_power=10_000_000.0)
+    assert result is not None
+    assert result.name is None
+
+
 def test_uses_fallback_reason_and_risk_when_score_has_no_factors() -> None:
     score = _score(positive=[], negative=[])
     result = build_stock_recommendation(score, _confirmation(), _candles(20), account_buying_power=10_000_000.0)

@@ -8,6 +8,7 @@ function buildRecommendation(overrides: Partial<Recommendation> = {}): Recommend
   return {
     id: "rec-1",
     symbol: "KRW-XRP",
+    name: "리플",
     asset_type: "CRYPTO",
     score: 92,
     state: "CONFIRMED_BREAKOUT",
@@ -50,6 +51,27 @@ describe("RecommendationCard", () => {
     expect(screen.getByText("₩4,270")).toBeInTheDocument();
     expect(screen.getByText("₩4,450")).toBeInTheDocument();
     expect(screen.getByText("40%")).toBeInTheDocument();
+  });
+
+  it("shows the display name prominently with the raw symbol alongside it", () => {
+    render(<RecommendationCard recommendation={buildRecommendation({ name: "리플" })} />);
+
+    expect(screen.getByText("리플")).toBeInTheDocument();
+    expect(screen.getByText("KRW-XRP")).toBeInTheDocument();
+  });
+
+  it("falls back to showing only the symbol when no name is known", () => {
+    render(<RecommendationCard recommendation={buildRecommendation({ name: null })} />);
+
+    expect(screen.getAllByText("KRW-XRP")).toHaveLength(1);
+  });
+
+  it("labels T1/T2/Runner with a plain-language explanation of what each means", () => {
+    render(<RecommendationCard recommendation={buildRecommendation()} />);
+
+    expect(screen.getByText(/1차 익절.*T1.*30%/)).toBeInTheDocument();
+    expect(screen.getByText(/2차 익절.*T2.*30%/)).toBeInTheDocument();
+    expect(screen.getByText(/잔여 추적 보유.*Runner/)).toBeInTheDocument();
   });
 
   it("hides reasons/risks until the toggle is clicked", () => {

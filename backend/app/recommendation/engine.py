@@ -52,6 +52,7 @@ class RecommendationInputs:
     regime: MarketRegime
     radar_state: RadarState
     account_buying_power: float
+    name: str | None = None
     risk_per_trade: float = DEFAULT_RISK_PER_TRADE
     t1_r_multiple: float = DEFAULT_T1_R_MULTIPLE
     t2_r_multiple: float = DEFAULT_T2_R_MULTIPLE
@@ -152,6 +153,7 @@ def build_recommendation(inputs: RecommendationInputs) -> Recommendation | None:
     return Recommendation(
         id=str(uuid.uuid4()),
         symbol=inputs.symbol,
+        name=inputs.name,
         asset_type=inputs.asset_type,
         score=score,
         state=inputs.radar_state.value,

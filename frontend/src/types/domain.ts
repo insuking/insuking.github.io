@@ -101,6 +101,7 @@ export interface Signal {
 export interface Recommendation {
   id: string;
   symbol: string;
+  name: string | null;
   asset_type: AssetType;
   score: number;
   state: string;

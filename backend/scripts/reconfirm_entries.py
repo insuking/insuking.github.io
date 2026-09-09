@@ -30,6 +30,12 @@ CRYPTO. Every run clears this script's own previously-persisted
 `stock-radar-%` rows first (idempotent replace, same pattern as
 `scan_crypto.py`'s `scan-crypto-%`), so a symbol that's no longer
 CONFIRMED on a later run doesn't linger as a stale recommendation.
+
+**P33**: each persisted `Recommendation` also carries the symbol's
+Korean company name (`app/stock_radar/persistence.py`'s
+`get_security_names()`, reading the same `securities` table
+`scan_stocks.py` already upserts) - the 추천 tab shown a bare 6-digit
+KRX code with no name told a user nothing.
 """
 
 from __future__ import annotations
@@ -54,7 +60,7 @@ from app.integrations.kis.errors import KisApiError
 from app.integrations.kis.rest_client import KOSPI_INDEX_CODE, KisRestClient
 from app.models.domain import Recommendation
 from app.radar.regime import MarketRegime, classify_market_regime
-from app.stock_radar.persistence import get_latest_scan
+from app.stock_radar.persistence import get_latest_scan, get_security_names
 from app.stock_radar.scan import build_confirmed_recommendations, reconfirm_candidates
 from app.stock_radar.scoring import PreBreakoutScore, ScoreFactor
 
@@ -89,6 +95,7 @@ async def _persist_recommendations(recommendations: list[Recommendation]) -> Non
                 RecommendationRow(
                     id=rec.id,
                     symbol=rec.symbol,
+                    name=rec.name,
                     asset_type=rec.asset_type.value,
                     score=rec.score,
                     state=rec.state,
@@ -129,6 +136,9 @@ async def run() -> None:
         print("Stored scan rows exist but none carry a usable reference_close - nothing to reconfirm.")
         return
 
+    async with session_scope() as session:
+        names = await get_security_names(session, [s.symbol for s in scores])
+
     print(f"Re-confirming {len(scores)} candidate(s) from scan_run_id={rows[0].scan_run_id}.\n")
 
     end_date = datetime.now(UTC).strftime("%Y%m%d")
@@ -167,7 +177,7 @@ async def run() -> None:
         atr_end_date = end_date
         atr_start_date = (datetime.now(UTC) - timedelta(days=_ATR_HISTORY_DAYS)).strftime("%Y%m%d")
         recommendations = await build_confirmed_recommendations(
-            rest, scores, confirmations, account_buying_power, atr_start_date, atr_end_date
+            rest, scores, confirmations, account_buying_power, atr_start_date, atr_end_date, names=names
         )
 
     await _persist_recommendations(recommendations)

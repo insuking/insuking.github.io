@@ -29,9 +29,17 @@
 .rec-card__symbol {
   font-weight: 700;
   font-size: 1.08rem;
-  margin-right: 8px;
+  margin-right: 6px;
   white-space: nowrap;
   letter-spacing: -0.01em;
+}
+
+.rec-card__code {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--color-text-tertiary);
+  margin-right: 8px;
+  white-space: nowrap;
 }
 
 .rec-card__state {
