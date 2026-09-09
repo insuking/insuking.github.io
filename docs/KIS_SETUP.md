@@ -172,11 +172,16 @@ APPROVE/APPROVE_WITH_AMOUNT_CHANGE decision on a `STOCK` recommendation
 now re-runs P14's `revalidate()` against a fresh KIS quote/candles/risk
 state and, only if still `VALID`, calls `KisExecutionProvider.place_order()`
 for real (subject to the two safety switches above, both of which still
-default to safe). Toss/Upbit (P15) still have the gap described above -
-this bridge is broker-agnostic by construction (it takes a `place_order`
-callable, not a hardcoded provider) but nothing has built their own
-`gather_*_revalidation_input()` yet, so a CRYPTO recommendation's APPROVE
-still only ever produces the APPROVED/REJECTED decision, same as before.
+default to safe). **Update again**: CRYPTO recommendations are wired too
+now - `gather_upbit_revalidation_input()` (same module) feeds the same
+orchestrator against real Upbit ticker/candle data, dispatched to
+`UpbitExecutionProvider.place_order()` for a `CRYPTO` recommendation's
+APPROVE. Toss is the one broker still not wired, and deliberately so -
+Toss and KIS are both domestic-stock (KRX) brokers, and nothing in this
+project's schema (`Recommendation.asset_type` is only STOCK/CRYPTO) says
+which one a given STOCK approval should route to; the STOCK dispatch was
+built assuming KIS. See `execution.py`'s own module docstring for the
+full reasoning.
 What this bridge still does *not* do: track a placed order to a real fill
 or open a `Position` from it (no live-broker fill poller exists yet), or
 re-check live buying power before sizing (reuses the recommendation's

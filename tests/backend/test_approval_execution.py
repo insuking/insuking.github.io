@@ -21,12 +21,11 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete, select
-
 from app.approval.execution import (
     ExecutionOutcome,
     execute_approved_recommendation,
     gather_kis_revalidation_input,
+    gather_upbit_revalidation_input,
 )
 from app.approval.revalidation import RevalidationInput
 from app.approval.service import ApprovalService
@@ -36,6 +35,8 @@ from app.db.models import Recommendation as RecommendationRow
 from app.db.session import session_scope
 from app.integrations.kis.auth import KisAuth
 from app.integrations.kis.rest_client import KisRestClient
+from app.integrations.upbit.rest_client import UpbitRestClient
+from sqlalchemy import delete, select
 
 pytestmark = [pytest.mark.P29, pytest.mark.asyncio]
 
@@ -380,6 +381,109 @@ async def test_gather_kis_revalidation_input_uses_latest_risk_state() -> None:
     rest = _rest_client_with(handler)
     async with session_scope() as session:
         data = await gather_kis_revalidation_input(session, rest, approval, rec)
+
+    assert data.risk_state is not None
+    assert data.risk_state.kill_switch_active is True
+    assert data.risk_state.kill_switch_reason == "test kill switch"
+
+
+# --- gather_upbit_revalidation_input -----------------------------------------
+
+
+def _upbit_rest_client_with(handler: Callable[[httpx.Request], httpx.Response]) -> UpbitRestClient:
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://mock.upbit.test")
+    return UpbitRestClient(client)
+
+
+def _upbit_handler(ticker_price: str = "710.0") -> Callable[[httpx.Request], httpx.Response]:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/ticker":
+            return httpx.Response(200, json=[{"market": _TEST_SYMBOL, "trade_price": ticker_price}])
+        if request.url.path.startswith("/v1/candles/minutes/"):
+            return httpx.Response(200, json=[])
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    return handler
+
+
+async def test_gather_upbit_revalidation_input_healthy_on_success() -> None:
+    approval, rec = await _create_approved()
+
+    rest = _upbit_rest_client_with(_upbit_handler(ticker_price="710.0"))
+    async with session_scope() as session:
+        data = await gather_upbit_revalidation_input(session, rest, approval, rec)
+
+    assert data.market_data_healthy is True
+    assert data.broker_healthy is True
+    assert data.current_price == 710.0
+    assert data.position_already_open is False
+
+
+async def test_gather_upbit_revalidation_input_unhealthy_on_fetch_failure() -> None:
+    approval, rec = await _create_approved()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"error": {"name": "boom", "message": "boom"}})
+
+    rest = _upbit_rest_client_with(handler)
+    async with session_scope() as session:
+        data = await gather_upbit_revalidation_input(session, rest, approval, rec)
+
+    assert data.market_data_healthy is False
+    assert data.broker_healthy is False
+    assert data.current_price == 0.0
+
+
+async def test_gather_upbit_revalidation_input_detects_open_position() -> None:
+    approval, rec = await _create_approved()
+    now = datetime.now(UTC)
+    async with session_scope() as session:
+        session.add(
+            Position(
+                id=f"pos-{uuid.uuid4()}",
+                symbol=_TEST_SYMBOL,
+                asset_type="CRYPTO",
+                quantity=10.0,
+                avg_entry_price=700.0,
+                stop_price=650.0,
+                state="OPEN",
+                opened_at=now,
+                updated_at=now,
+            )
+        )
+        await session.commit()
+
+    rest = _upbit_rest_client_with(_upbit_handler())
+    async with session_scope() as session:
+        data = await gather_upbit_revalidation_input(session, rest, approval, rec)
+
+    assert data.position_already_open is True
+
+
+async def test_gather_upbit_revalidation_input_uses_latest_risk_state() -> None:
+    approval, rec = await _create_approved()
+    now = datetime.now(UTC)
+    async with session_scope() as session:
+        session.add(
+            RiskStateRow(
+                id=f"risk-{uuid.uuid4()}",
+                as_of=now,
+                daily_loss=0.0,
+                daily_loss_limit=1000.0,
+                exposure=0.0,
+                exposure_limit=1000.0,
+                open_positions=0,
+                max_positions=5,
+                consecutive_stops=0,
+                kill_switch_active=True,
+                kill_switch_reason="test kill switch",
+            )
+        )
+        await session.commit()
+
+    rest = _upbit_rest_client_with(_upbit_handler())
+    async with session_scope() as session:
+        data = await gather_upbit_revalidation_input(session, rest, approval, rec)
 
     assert data.risk_state is not None
     assert data.risk_state.kill_switch_active is True

@@ -41,6 +41,7 @@ from app.approval.execution import (
     ExecutionResult,
     execute_approved_recommendation,
     gather_kis_revalidation_input,
+    gather_upbit_revalidation_input,
 )
 from app.approval.rate_limit import check_and_record_attempt
 from app.approval.service import ApprovalDecision, ApprovalService
@@ -55,6 +56,10 @@ from app.integrations.kis.auth import KisAuth
 from app.integrations.kis.execution import KisExecutionProvider
 from app.integrations.kis.orders import KisOrderClient
 from app.integrations.kis.rest_client import KisRestClient
+from app.integrations.upbit.auth import UpbitAuth
+from app.integrations.upbit.execution import UpbitExecutionProvider
+from app.integrations.upbit.orders import UpbitOrderClient
+from app.integrations.upbit.rest_client import UpbitRestClient
 from app.models.domain import AssetType
 
 router = APIRouter(prefix="/api/approvals", tags=["approvals"])
@@ -98,10 +103,11 @@ class DecideRequest(BaseModel):
 class DecideResponse(BaseModel):
     approval_state: str
     execution_outcome: str | None = None
-    """Set only for a STOCK recommendation's APPROVE/APPROVE_WITH_AMOUNT_CHANGE
-    decision - see `app/approval/execution.py`'s `ExecutionOutcome`. `None`
-    for REJECT/HOLD, and for CRYPTO recommendations (no execution bridge
-    wired up for Toss/Upbit yet - see that module's own docstring)."""
+    """Set only for an APPROVE/APPROVE_WITH_AMOUNT_CHANGE decision on a
+    STOCK (routed to KIS) or CRYPTO (routed to Upbit) recommendation - see
+    `app/approval/execution.py`'s `ExecutionOutcome`. `None` for REJECT/
+    HOLD. Toss is not wired to any recommendation's execution bridge yet -
+    see that module's own docstring for why STOCK always means KIS here."""
     execution_reasons: list[str] = []
 
 
@@ -134,6 +140,42 @@ async def _execute_stock_recommendation(
             revalidation_data,
             provider.place_order,
             lambda quantity: {"quantity": str(quantity), "price": str(recommendation.entry_low)},
+        )
+
+
+async def _execute_crypto_recommendation(
+    session: AsyncSession, approval: Approval, recommendation: RecommendationRow
+) -> ExecutionResult:
+    """Only called for a just-APPROVED CRYPTO recommendation. Builds a real
+    `UpbitRestClient`/`UpbitExecutionProvider` and runs the same P29 bridge
+    as `_execute_stock_recommendation()` above. Safe to call even with
+    Upbit unconfigured or `LIVE_TRADING` at its default - both fail closed
+    (INVALIDATED from unhealthy market data, or EXECUTION_FAILED from
+    `LiveTradingDisabledError`), never place a real order by accident.
+    Unlike KIS, Upbit has no separate paper-trading switch to also check -
+    `LIVE_TRADING` alone gates every mutating call (see
+    `app/integrations/upbit/execution.py`'s module docstring).
+    """
+    settings = get_settings()
+    async with httpx.AsyncClient(base_url=settings.upbit_rest_base_url, timeout=10.0) as client:
+        rest = UpbitRestClient(client)
+        revalidation_data = await gather_upbit_revalidation_input(session, rest, approval, recommendation)
+
+        auth = UpbitAuth(settings.upbit_access_key, settings.upbit_secret_key)
+        order_client = UpbitOrderClient(client, auth)
+        provider = UpbitExecutionProvider(order_client, settings=settings)
+
+        return await execute_approved_recommendation(
+            session,
+            approval,
+            recommendation,
+            revalidation_data,
+            provider.place_order,
+            lambda quantity: {
+                "ord_type": "limit",
+                "volume": str(quantity),
+                "price": str(recommendation.entry_low),
+            },
         )
 
 
@@ -229,13 +271,16 @@ async def decide_approval(
             select(RecommendationRow).where(RecommendationRow.id == approval.recommendation_id)
         )
         recommendation = recommendation_result.scalar_one_or_none()
-        if recommendation is None or recommendation.asset_type != AssetType.STOCK.value:
-            # CRYPTO: no execution bridge wired up yet (see app/approval/execution.py's
-            # module docstring) - the approval stays APPROVED, same as before this endpoint
-            # changed, so nothing about crypto's existing (lack of) behavior regresses.
+        if recommendation is None:
             return DecideResponse(approval_state=approval.state)
 
-        result = await _execute_stock_recommendation(session, approval, recommendation)
+        if recommendation.asset_type == AssetType.STOCK.value:
+            result = await _execute_stock_recommendation(session, approval, recommendation)
+        elif recommendation.asset_type == AssetType.CRYPTO.value:
+            result = await _execute_crypto_recommendation(session, approval, recommendation)
+        else:
+            return DecideResponse(approval_state=approval.state)
+
         return DecideResponse(
             approval_state=result.approval.state,
             execution_outcome=result.outcome.value,

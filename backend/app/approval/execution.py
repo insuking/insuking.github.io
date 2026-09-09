@@ -20,10 +20,18 @@ it takes an already-placed-order-capable callable
 (`place_order: Callable[..., Awaitable[Order]]`, the exact shape every
 `ExecutionProvider.place_order(session, *, trade_plan_id, symbol, side,
 ...)` in this project already has) rather than importing a specific
-provider, so Toss/Upbit can use this same function once something builds
-their own input-gathering helper - `gather_kis_revalidation_input()`
-below is the one input-gathering helper this phase actually needed,
-for the concrete case this was asked for (stock radar -> KIS).
+provider. `gather_kis_revalidation_input()` (STOCK -> KIS) and
+`gather_upbit_revalidation_input()` (CRYPTO -> Upbit) below are the two
+input-gathering helpers built so far, both feeding the same orchestrator.
+
+**Toss is not wired in**, on purpose, not an oversight: `Recommendation.
+asset_type` only distinguishes STOCK/CRYPTO (see `app/models/domain.py`'s
+`AssetType`), but Toss Securities (P5/P15) and KIS (P3/P23+) are both
+domestic-stock (KRX) brokers - nothing in this project's schema says which
+one a given STOCK recommendation should route to, and the STOCK dispatch
+in `app/api/approvals.py` was built assuming KIS (the broker the stock
+radar itself was built against). Wiring Toss requires deciding that
+routing question first, not just writing a third `gather_*` helper.
 
 Quantity: reuses `app/recommendation/engine.py`'s own `position_size()`
 formula against the recommendation's already-computed
@@ -57,9 +65,13 @@ from app.approval.service import ApprovalService
 from app.db.models import Approval, Order, Position, RiskStateRow, TradePlan
 from app.db.models import Recommendation as RecommendationRow
 from app.integrations.kis.rest_client import KOSPI_INDEX_CODE, KisRestClient
-from app.models.domain import RiskState
+from app.integrations.upbit.rest_client import UpbitRestClient
+from app.models.domain import Candle, RiskState
 from app.recommendation.engine import position_size
 from app.risk.state_store import latest_risk_state
+from app.scan.crypto_scan import BENCHMARK_MARKET as UPBIT_BENCHMARK_MARKET
+from app.scan.crypto_scan import CANDLE_COUNT as UPBIT_CANDLE_COUNT
+from app.scan.crypto_scan import CANDLE_UNIT_MINUTES as UPBIT_CANDLE_UNIT_MINUTES
 
 _BENCHMARK_HISTORY_DAYS = 90
 _AVERAGE_VOLUME_WINDOW = 20
@@ -234,6 +246,88 @@ async def gather_kis_revalidation_input(
         approval_expires_at=approval.expires_at,
         recommendation=recommendation,
         current_price=quote.price if quote is not None else 0.0,
+        recent_candles=recent_candles,
+        average_volume=average_volume,
+        benchmark_candles=benchmark_candles,
+        orderbook=None,
+        risk_state=risk_state,
+        market_data_healthy=healthy,
+        broker_healthy=healthy,
+        position_already_open=position_already_open,
+    )
+
+
+def _chronological(candles: list[Candle]) -> list[Candle]:
+    """Upbit's REST candle endpoint returns most-recent-bar-first; every
+    P4/P8 feature function (and `revalidate()` itself, via `recent_candles
+    [-1]`) assumes ascending (oldest-first) order - same fact and fix as
+    `app/scan/crypto_scan.py`'s own private `_chronological()`, kept as a
+    tiny local copy rather than importing a same-module private helper
+    across modules."""
+    return list(reversed(candles))
+
+
+async def gather_upbit_revalidation_input(
+    session: AsyncSession,
+    rest: UpbitRestClient,
+    approval: Approval,
+    recommendation: RecommendationRow,
+) -> RevalidationInput:
+    """Assembles a real `RevalidationInput` for a CRYPTO recommendation
+    right before executing it via Upbit - a fresh ticker price, recent
+    1-minute candles, the real KRW-BTC benchmark (all endpoints already
+    verified real in P7/P9/P23's `app/scan/crypto_scan.py`), the latest
+    recorded `RiskState`, and whether a position in this market is already
+    open. Same shape and same honest gaps as `gather_kis_revalidation_input()`:
+
+    `orderbook` stays `None`: `UpbitRestClient` (P7) has no orderbook
+    snapshot method - Upbit's real-time orderbook only reaches this project
+    over the WebSocket stream (`H0STASP0`-equivalent `orderbook` channel),
+    not a one-shot REST call this function could make. `revalidate()`
+    already treats a missing orderbook as "skip the spread/slippage
+    checks", not a fabricated value.
+
+    `market_data_healthy`/`broker_healthy` are both derived from whether
+    the fetch below actually succeeded, same reasoning as KIS's version -
+    P19's health_monitor doesn't yet expose a per-exchange REST reachability
+    check to reuse instead.
+    """
+    now = datetime.now(UTC)
+
+    try:
+        current_price = await rest.get_ticker_price(recommendation.symbol)
+        recent_candles = _chronological(
+            await rest.get_candles(recommendation.symbol, UPBIT_CANDLE_UNIT_MINUTES, UPBIT_CANDLE_COUNT)
+        )
+        benchmark_candles = _chronological(
+            await rest.get_candles(UPBIT_BENCHMARK_MARKET, UPBIT_CANDLE_UNIT_MINUTES, UPBIT_CANDLE_COUNT)
+        )
+        healthy = True
+    except Exception:  # noqa: BLE001 - a failed live fetch must revalidate as unhealthy, not crash
+        current_price = 0.0
+        recent_candles = []
+        benchmark_candles = []
+        healthy = False
+
+    average_volume = 0.0
+    if len(recent_candles) > 1:
+        window = recent_candles[-_AVERAGE_VOLUME_WINDOW - 1 : -1]
+        if window:
+            average_volume = sum(c.volume for c in window) / len(window)
+
+    risk_row = await latest_risk_state(session)
+    risk_state = _to_risk_state(risk_row) if risk_row is not None else None
+
+    position_result = await session.execute(
+        select(Position).where(Position.symbol == recommendation.symbol, Position.quantity > 0)
+    )
+    position_already_open = position_result.scalar_one_or_none() is not None
+
+    return RevalidationInput(
+        now=now,
+        approval_expires_at=approval.expires_at,
+        recommendation=recommendation,
+        current_price=current_price,
         recent_candles=recent_candles,
         average_volume=average_volume,
         benchmark_candles=benchmark_candles,

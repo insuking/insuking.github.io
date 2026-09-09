@@ -6,22 +6,22 @@ expiry, so `KakaoTokenStore.get_valid_access_token` returns it without ever
 making a network call (see app/integrations/kakao/token_store.py - a
 still-valid token is returned directly, no refresh() call happens).
 
-The STOCK-dispatch tests near the bottom (P29) monkeypatch
-`gather_kis_revalidation_input`/`KisExecutionProvider.place_order` - the two
-places `_execute_stock_recommendation()` would otherwise hit a real KIS
+The STOCK/CRYPTO-dispatch tests near the bottom (P29) monkeypatch
+`gather_kis_revalidation_input`/`KisExecutionProvider.place_order` (STOCK)
+and `gather_upbit_revalidation_input`/`UpbitExecutionProvider.place_order`
+(CRYPTO) - the places `_execute_stock_recommendation()`/
+`_execute_crypto_recommendation()` would otherwise hit a real broker
 connection - so they exercise the real endpoint wiring
-(app/api/approvals.py's new STOCK-vs-CRYPTO dispatch) without ever needing
-real KIS credentials or network access.
+(app/api/approvals.py's asset_type dispatch) without ever needing real KIS
+or Upbit credentials or network access.
 """
 
 from datetime import UTC, datetime, timedelta
 
+import app.api.approvals as approvals_api
 import httpx
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete, select
-
-import app.api.approvals as approvals_api
 from app.approval.pin import hash_pin
 from app.approval.revalidation import RevalidationInput
 from app.approval.service import ApprovalService
@@ -30,7 +30,9 @@ from app.db.models import Approval, ApprovalEvent, KakaoAccount, Order, TradePla
 from app.db.models import Recommendation as RecommendationRow
 from app.db.session import session_scope
 from app.integrations.kis.execution import KisExecutionProvider
+from app.integrations.upbit.execution import UpbitExecutionProvider
 from app.main import app
+from sqlalchemy import delete, select
 
 pytestmark = [pytest.mark.P13, pytest.mark.asyncio]
 
@@ -78,6 +80,8 @@ async def _cleanup():  # type: ignore[no-untyped-def]
         await session.execute(delete(RecommendationRow).where(RecommendationRow.symbol == "KRW-XRP-API-TEST"))
         await session.execute(delete(RecommendationRow).where(RecommendationRow.symbol == _TEST_STOCK_SYMBOL))
         await session.execute(delete(Order).where(Order.symbol == _TEST_STOCK_SYMBOL))
+        await session.execute(delete(RecommendationRow).where(RecommendationRow.symbol == _TEST_CRYPTO_SYMBOL))
+        await session.execute(delete(Order).where(Order.symbol == _TEST_CRYPTO_SYMBOL))
         await session.execute(
             delete(KakaoAccount).where(KakaoAccount.user_id.in_([_TEST_USER_ID, "someone-else"]))
         )
@@ -204,7 +208,15 @@ async def test_decide_reject_then_reuse_returns_410() -> None:
     assert second.status_code == 410
 
 
-async def test_decide_approve_requires_pin_and_succeeds_with_it() -> None:
+async def test_decide_approve_requires_pin_and_succeeds_with_it(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """PIN verification, not the P29 execution bridge, is what this test
+    covers - `_create_approval()`'s recommendation is CRYPTO, so a real
+    APPROVE now also runs `_execute_crypto_recommendation()` (Upbit); mock
+    it out (same helpers the CRYPTO-dispatch tests below use) so this stays
+    a fast, deterministic PIN check instead of depending on live network."""
+    monkeypatch.setattr(approvals_api, "gather_upbit_revalidation_input", _fake_gather(healthy=True))
+    monkeypatch.setattr(UpbitExecutionProvider, "place_order", _fake_upbit_place_order)
+
     await _seed_valid_kakao_session(_TEST_USER_ID)
     _, token = await _create_approval()
 
@@ -222,7 +234,7 @@ async def test_decide_approve_requires_pin_and_succeeds_with_it() -> None:
             headers={"X-User-Id": _TEST_USER_ID},
         )
     assert correct_pin.status_code == 200
-    assert correct_pin.json()["approval_state"] == "APPROVED"
+    assert correct_pin.json()["approval_state"] == "EXECUTED"
 
 
 async def test_decide_approve_with_amount_change_without_amount_is_400() -> None:
@@ -394,3 +406,113 @@ async def test_decide_reject_stock_never_touches_execution_bridge(monkeypatch) -
     body = response.json()
     assert body["approval_state"] == "REJECTED"
     assert body["execution_outcome"] is None
+
+
+# --- P29: CRYPTO recommendations dispatch through the execution bridge (Upbit) ---
+
+_TEST_CRYPTO_SYMBOL = "KRW-CRYPTOAPI-TEST"
+
+
+async def _create_crypto_approval() -> tuple[str, str]:
+    """Same shape as `_create_stock_approval()` but `asset_type="CRYPTO"` -
+    the only thing that makes `decide_approval()` call
+    `_execute_crypto_recommendation()` (Upbit) instead of
+    `_execute_stock_recommendation()` (KIS) after APPROVE."""
+    now = datetime.now(UTC)
+    async with session_scope() as session:
+        rec = RecommendationRow(
+            id=f"rec-crypto-api-{now.timestamp()}",
+            symbol=_TEST_CRYPTO_SYMBOL,
+            asset_type="CRYPTO",
+            score=88.0,
+            state="CONFIRMED_BREAKOUT",
+            entry_low=700.0,
+            entry_high=705.0,
+            stop_price=650.0,
+            t1_price=750.0,
+            t1_percent=30.0,
+            t2_price=800.0,
+            t2_percent=30.0,
+            runner_percent=40.0,
+            expected_max_loss=1000.0,
+            risk_reward=2.0,
+            reasons='["Confirmed breakout"]',
+            risks='["Standard breakout risk"]',
+            created_at=now,
+            expires_at=now + timedelta(minutes=5),
+        )
+        session.add(rec)
+        await session.commit()
+
+        service = ApprovalService(session)
+        _, plaintext = await service.create_approval(rec.id, _TEST_USER_ID)
+        return rec.id, plaintext
+
+
+async def _fake_upbit_place_order(self, session, *, trade_plan_id, symbol, side, **extra):  # type: ignore[no-untyped-def]
+    now = datetime.now(UTC)
+    order = Order(
+        id=f"fake-upbit-order-{now.timestamp()}",
+        trade_plan_id=trade_plan_id,
+        symbol=symbol,
+        side=side,
+        order_type="LIMIT",
+        quantity=float(extra["volume"]),
+        price=float(extra["price"]),
+        status="SUBMITTED",
+        broker="UPBIT",
+        broker_order_id="FAKE-UUID",
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(order)
+    await session.commit()
+    return order
+
+
+async def test_decide_approve_crypto_executes_via_upbit_and_returns_executed_outcome(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(approvals_api, "gather_upbit_revalidation_input", _fake_gather(healthy=True))
+    monkeypatch.setattr(UpbitExecutionProvider, "place_order", _fake_upbit_place_order)
+
+    await _seed_valid_kakao_session(_TEST_USER_ID)
+    _, token = await _create_crypto_approval()
+
+    async with await _client() as client:
+        response = await client.post(
+            f"/api/approvals/{token}/decide",
+            json={"decision": "APPROVE", "pin": _TEST_PIN},
+            headers={"X-User-Id": _TEST_USER_ID},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["approval_state"] == "EXECUTED"
+    assert body["execution_outcome"] == "EXECUTED"
+    assert body["execution_reasons"] == []
+
+
+async def test_decide_approve_crypto_invalidated_never_touches_kis_bridge(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A CRYPTO approval must dispatch to Upbit, never KIS - monkeypatching
+    `gather_kis_revalidation_input` to raise proves it's never called."""
+
+    async def _boom(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("gather_kis_revalidation_input must not be called for a CRYPTO recommendation")
+
+    monkeypatch.setattr(approvals_api, "gather_kis_revalidation_input", _boom)
+    monkeypatch.setattr(approvals_api, "gather_upbit_revalidation_input", _fake_gather(healthy=False))
+    monkeypatch.setattr(UpbitExecutionProvider, "place_order", _fake_upbit_place_order)
+
+    await _seed_valid_kakao_session(_TEST_USER_ID)
+    _, token = await _create_crypto_approval()
+
+    async with await _client() as client:
+        response = await client.post(
+            f"/api/approvals/{token}/decide",
+            json={"decision": "APPROVE", "pin": _TEST_PIN},
+            headers={"X-User-Id": _TEST_USER_ID},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["approval_state"] == "INVALIDATED"
+    assert body["execution_outcome"] == "INVALIDATED"
