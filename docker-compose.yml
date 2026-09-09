@@ -29,6 +29,9 @@ services:
     build:
       context: .
       dockerfile: docker/backend.Dockerfile
+    env_file:
+      - path: ./.env
+        required: false
     environment:
       DATABASE_URL: postgresql+asyncpg://radar:radar@postgres:5432/radar
       REDIS_URL: redis://redis:6379/0
