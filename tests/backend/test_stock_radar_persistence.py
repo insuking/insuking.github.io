@@ -51,6 +51,11 @@ async def test_persists_a_security_row_and_a_ranked_radar_score_row_per_symbol()
         assert security_a is not None
         assert security_a.name == "테스트종목A"
         assert security_a.market == "KOSPI"
+        # a real docker-compose run caught created_at being left unset (NOT
+        # NULL violation) - assert both timestamp columns explicitly so a
+        # regression here fails loudly instead of only in production.
+        assert security_a.created_at is not None
+        assert security_a.data_updated_at is not None
 
         scores = (
             await session.execute(select(RadarScoreRow).where(RadarScoreRow.scan_run_id == run_id))

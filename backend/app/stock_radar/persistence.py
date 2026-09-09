@@ -63,12 +63,21 @@ async def persist_scan_results(
         name = names.get(result.symbol, result.symbol)
         existing = await session.get(SecurityRow, result.symbol)
         if existing is None:
-            session.add(SecurityRow(symbol=result.symbol, name=name, market=market.value))
+            session.add(
+                SecurityRow(
+                    symbol=result.symbol,
+                    name=name,
+                    market=market.value,
+                    data_updated_at=now,
+                    created_at=now,
+                )
+            )
         else:
             if existing.name != name:
                 existing.name = name
             if existing.market != market.value:
                 existing.market = market.value
+            existing.data_updated_at = now
 
         session.add(
             RadarScoreRow(
