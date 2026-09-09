@@ -99,6 +99,27 @@
   margin-bottom: 4px;
 }
 
+.approval-page__execution-notice {
+  background: var(--color-danger-tint);
+  color: var(--color-danger);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px;
+  font-size: 0.85rem;
+}
+
+.approval-page__execution-notice .approval-page__details-title {
+  color: var(--color-danger);
+}
+
+.approval-page__execution-notice ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.approval-page__execution-notice li {
+  margin-bottom: 4px;
+}
+
 .approval-page__pin-box {
   display: flex;
   flex-direction: column;

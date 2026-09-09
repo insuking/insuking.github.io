@@ -107,6 +107,7 @@ function ApprovalDetailView({ token, userId, initialDetail }: ApprovalDetailView
   const [overrideAmount, setOverrideAmount] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [executionReasons, setExecutionReasons] = useState<string[] | null>(null);
 
   const remainingSeconds = useCountdown(expiresAtIso);
   const isTerminal = TERMINAL_STATES.has(detail.approval_state);
@@ -125,6 +126,16 @@ function ApprovalDetailView({ token, userId, initialDetail }: ApprovalDetailView
             : { decision };
       const result = await decideApproval(token, userId, body);
       setDetail((prev) => ({ ...prev, approval_state: result.approval_state }));
+      // Only APPROVE/APPROVE_WITH_AMOUNT_CHANGE on a STOCK recommendation
+      // sets execution_outcome (P29's bridge) - "EXECUTED" already reads
+      // as "주문 완료" from the state badge above, so only surface reasons
+      // for the outcomes where the order did NOT go through
+      // (INVALIDATED/EXPIRED/EXECUTION_FAILED).
+      setExecutionReasons(
+        result.execution_outcome && result.execution_outcome !== "EXECUTED"
+          ? (result.execution_reasons ?? [])
+          : null
+      );
       setPendingAction(null);
       setPin("");
     } catch (err) {
@@ -204,6 +215,17 @@ function ApprovalDetailView({ token, userId, initialDetail }: ApprovalDetailView
       </div>
 
       {actionError && <p className="approval-page__notice approval-page__notice--error">{actionError}</p>}
+
+      {executionReasons && executionReasons.length > 0 && (
+        <div className="approval-page__execution-notice">
+          <p className="approval-page__details-title">주문이 체결되지 않았습니다</p>
+          <ul>
+            {executionReasons.map((reason) => (
+              <li key={reason}>{reason}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {pendingAction && !decisionsDisabled && (
         <div className="approval-page__pin-box">

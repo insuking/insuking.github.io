@@ -11,11 +11,18 @@
  * dependency-free here) - `#/positions` etc. still gives real
  * back-button/bookmark support without pulling in react-router for seven
  * flat, non-nested routes.
+ *
+ * `stocks`'s label is "종목", not the page's own full "종목레이더" title -
+ * every other tab label is 2-3 Korean characters, and the full 5-character
+ * name wrapped onto two lines at this bar's per-tab width (7 tabs, not the
+ * original 6 the P21 layout was sized for), breaking the single-row rhythm
+ * every other tab keeps. `StockRadarPage.tsx`'s `<h1>` still says
+ * "종목레이더" in full - only this cramped nav slot needed shortening.
  */
 
 export const TABS = [
   { id: "radar", label: "Radar", hash: "#/radar" },
-  { id: "stocks", label: "종목레이더", hash: "#/stocks" },
+  { id: "stocks", label: "종목", hash: "#/stocks" },
   { id: "recommendations", label: "추천", hash: "#/recommendations" },
   { id: "positions", label: "포지션", hash: "#/positions" },
   { id: "market", label: "시장", hash: "#/market" },

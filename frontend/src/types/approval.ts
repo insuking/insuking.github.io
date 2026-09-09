@@ -29,4 +29,10 @@ export interface ApprovalDetail {
 
 export interface DecideResult {
   approval_state: string;
+  /** P29 continuation - set only for a STOCK recommendation's APPROVE/
+   * APPROVE_WITH_AMOUNT_CHANGE decision (see backend/app/approval/
+   * execution.py's `ExecutionOutcome`). `undefined` for REJECT/HOLD and
+   * for CRYPTO recommendations, which don't run the execution bridge yet. */
+  execution_outcome?: string;
+  execution_reasons?: string[];
 }
