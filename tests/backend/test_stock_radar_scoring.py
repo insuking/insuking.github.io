@@ -14,8 +14,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.models.domain import Candle
+from app.stock_radar.investor_flow import InvestorFlowBar
 from app.stock_radar.scoring import (
     SCORE_MAX_AVAILABLE,
+    SCORE_MAX_WITH_INSTITUTIONAL_FLOW,
     PreBreakoutWeights,
     score_prebreakout,
 )
@@ -135,3 +137,45 @@ def test_custom_weights_change_the_total() -> None:
     assert default_result.total_score > 0
     assert zero_result.total_score == 0.0
     assert zero_result.max_available == 0.0
+
+
+def _flow_bars(net_flows: list[tuple[float, float]]) -> list[InvestorFlowBar]:
+    return [
+        InvestorFlowBar(date=_START + timedelta(days=i), foreign_net_qty=f, institution_net_qty=o)
+        for i, (f, o) in enumerate(net_flows)
+    ]
+
+
+def test_without_investor_flow_bars_max_available_is_unchanged_from_before_p25() -> None:
+    result = score_prebreakout("005930", _textbook_setup_candles(), _flat_benchmark(75, drift=0.5))
+
+    assert result is not None
+    assert result.max_available == pytest.approx(SCORE_MAX_AVAILABLE)
+
+
+def test_sustained_institutional_buying_raises_the_score_and_ceiling() -> None:
+    candles = _textbook_setup_candles()
+    benchmark = _flat_benchmark(75, drift=0.5)
+    buying = _flow_bars([(1000.0, 500.0)] * 10)
+
+    without_flow = score_prebreakout("005930", candles, benchmark)
+    with_flow = score_prebreakout("005930", candles, benchmark, investor_flow_bars=buying)
+
+    assert without_flow is not None
+    assert with_flow is not None
+    assert with_flow.max_available == pytest.approx(SCORE_MAX_WITH_INSTITUTIONAL_FLOW)
+    assert with_flow.total_score > without_flow.total_score
+    assert any(f.factor == "institutional_flow" for f in with_flow.positive)
+
+
+def test_sustained_institutional_selling_adds_no_points_but_still_raises_the_ceiling() -> None:
+    candles = _textbook_setup_candles()
+    benchmark = _flat_benchmark(75, drift=0.5)
+    selling = _flow_bars([(-1000.0, -500.0)] * 10)
+
+    result = score_prebreakout("005930", candles, benchmark, investor_flow_bars=selling)
+
+    assert result is not None
+    assert result.max_available == pytest.approx(SCORE_MAX_WITH_INSTITUTIONAL_FLOW)
+    assert any(f.factor == "institutional_outflow" for f in result.negative)
+    assert result.total_score <= result.max_available

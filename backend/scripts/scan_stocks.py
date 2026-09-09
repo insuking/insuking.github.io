@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Run a real KIS PRE-BREAKOUT stock scan (P23).
+"""Run a real KIS PRE-BREAKOUT stock scan (P23, extended in P25).
 
 Real HTTP requests to KIS (requires `KIS_APP_KEY`/`KIS_APP_SECRET` - see
-docs/KIS_SETUP.md; this project has none provisioned yet, so this script
-cannot be run for real until you provision them). Read-only: writes
-nothing to the database yet - P23's DB tables (`securities`,
-`radar_scores`, `radar_features`) exist (see app/db/models.py) but
-persistence wiring is a fast-follow, not blocked on anything here.
+docs/KIS_SETUP.md). Read-only: writes nothing to the database yet - P23's
+DB tables (`securities`, `radar_scores`, `radar_features`) exist (see
+app/db/models.py) but persistence wiring is a fast-follow, not blocked on
+anything here.
 
 **Universe**: `STOCK_SCAN_SYMBOLS` (comma-separated KRX 6-digit codes) if
 set, else a small default list of large, liquid KOSPI names - not the
@@ -16,17 +15,20 @@ downloader/parser for yet (see app/stock_radar/scan.py's module
 docstring) - seed `securities` by hand or extend this script once that
 exists.
 
-**Benchmark**: this script now attempts a real KOSPI index fetch via
-`KisRestClient.get_index_daily_prices()` (see that method's docstring -
-still not independently verified against real KIS servers as of this
-writing). If that call fails for any reason (unverified field layout,
-KIS error, network), this script falls back to a flat placeholder
-benchmark and prints a clear warning rather than crashing the whole scan
-- in that fallback case every score's "시장 상대강도" component still
-reads as the stock's own raw return rather than a true excess-over-
-benchmark figure. Once a real run confirms the index fetch works, this
-fallback path should stop triggering in practice; it stays in place as
-a safety net either way.
+**Benchmark**: this script attempts a real KOSPI index fetch via
+`KisRestClient.get_index_daily_prices()` - confirmed working by a real
+docker-compose run (2026-09), see docs/KIS_SETUP.md. If that call ever
+fails (network, a future KIS-side change), this script falls back to a
+flat placeholder benchmark and prints a clear warning rather than
+crashing the whole scan.
+
+**Institutional flow** (P25): each symbol's score also tries to include a
+12-point `institutional_flow` factor (외국인+기관 순매수) via
+`KisRestClient.get_investor_trend()` - not yet confirmed against a live
+response from this project's own credentials, unlike the benchmark above.
+`scan_stock_universe()` degrades that one symbol back to the 65-point
+price/volume-only ceiling (rather than crashing the scan) if the call
+fails - see that function's docstring.
 """
 
 from __future__ import annotations

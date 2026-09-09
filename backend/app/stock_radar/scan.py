@@ -33,9 +33,11 @@ in this module.
 
 from __future__ import annotations
 
+from app.integrations.kis.errors import KisApiError
 from app.integrations.kis.rest_client import KisRestClient
 from app.models.domain import Candle
 from app.radar.ranking import RadarFunnel, rank_candidates
+from app.stock_radar.investor_flow import InvestorFlowBar
 from app.stock_radar.scoring import (
     DEFAULT_WEIGHTS,
     PreBreakoutScore,
@@ -49,6 +51,7 @@ def rank_prebreakout_candidates(
     benchmark_candles: list[Candle],
     weights: PreBreakoutWeights = DEFAULT_WEIGHTS,
     top_n: int = 30,
+    symbol_flow_bars: dict[str, list[InvestorFlowBar]] | None = None,
 ) -> list[PreBreakoutScore]:
     """Score every symbol with enough history, rank by `total_score`
     (reusing P4's `rank_candidates()` funnel), and return the top `top_n`
@@ -57,10 +60,17 @@ def rank_prebreakout_candidates(
     too little history are silently skipped, never scored with fabricated
     data - matches `score_prebreakout()`'s own `None`-on-insufficient-data
     gating.
+
+    `symbol_flow_bars` (P25, optional): per-symbol investor-flow history,
+    passed straight through to `score_prebreakout()`'s own
+    `investor_flow_bars` param when present for that symbol - see that
+    function's docstring for how omitting it (the default) leaves scoring
+    exactly as it was before P25.
     """
     scores: dict[str, PreBreakoutScore] = {}
     for symbol, candles in symbol_candles.items():
-        result = score_prebreakout(symbol, candles, benchmark_candles, weights=weights)
+        flow_bars = (symbol_flow_bars or {}).get(symbol)
+        result = score_prebreakout(symbol, candles, benchmark_candles, weights=weights, investor_flow_bars=flow_bars)
         if result is not None:
             scores[symbol] = result
 
@@ -88,15 +98,35 @@ async def scan_stock_universe(
     call, via `KisRestClient.get_daily_prices_with_name()` - no extra
     round trip) for display purposes; a symbol is omitted if KIS didn't
     return a name for it.
+
+    Also fetches each symbol's investor-flow history (P25, via
+    `KisRestClient.get_investor_trend()` - one extra rate-limited call per
+    symbol) and feeds it into scoring, so a real scan gets the
+    `institutional_flow` factor without the caller having to do anything
+    extra. Unlike the daily-price/name fetch above, this call is wrapped
+    per-symbol: `get_investor_trend()`'s field layout is confirmed only
+    against KIS's public sample repo, not yet against a live response from
+    this project's own credentials (see docs/KIS_SETUP.md), so a bad guess
+    there degrades that one symbol to the pre-P25 65-point ceiling instead
+    of crashing the whole scan.
     """
     symbol_candles: dict[str, list[Candle]] = {}
     names: dict[str, str] = {}
+    symbol_flow_bars: dict[str, list[InvestorFlowBar]] = {}
     for symbol in symbols:
         candles, name = await rest.get_daily_prices_with_name(symbol, start_date, end_date)
         if candles:
             symbol_candles[symbol] = candles
         if name:
             names[symbol] = name
+        try:
+            flow_bars = await rest.get_investor_trend(symbol)
+        except (KisApiError, KeyError, ValueError):
+            flow_bars = []
+        if flow_bars:
+            symbol_flow_bars[symbol] = flow_bars
 
-    results = rank_prebreakout_candidates(symbol_candles, benchmark_candles, weights=weights, top_n=top_n)
+    results = rank_prebreakout_candidates(
+        symbol_candles, benchmark_candles, weights=weights, top_n=top_n, symbol_flow_bars=symbol_flow_bars
+    )
     return results, names

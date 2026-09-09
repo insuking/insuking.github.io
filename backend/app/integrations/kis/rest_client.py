@@ -41,9 +41,19 @@ sample (`examples_llm/domestic_stock/inquire_daily_indexchartprice/`)
 confirmed indices are a **separate endpoint**,
 `inquire-daily-indexchartprice` (tr_id `FHKUP03500100`), whose daily rows
 use `bstp_nmix_*` field names (업종지수, "sector/composite index") instead
-of a stock row's `stck_*` fields - not yet confirmed against a live
-response from this project's own credentials, only against KIS's public
-sample code.
+of a stock row's `stck_*` fields - confirmed correct by a real
+docker-compose run (2026-09).
+
+`get_investor_trend()` (P25) is `inquire-investor` (tr_id
+`FHKST01010900`) - daily foreign (외국인) and institutional (기관) net-buy
+share counts per symbol, confirmed against KIS's public sample repo
+(`examples_llm/domestic_stock/inquire_investor/`) but not yet against a
+live response from this project's own credentials. Unlike the daily-price
+endpoints, it takes no date range (KIS returns a fixed recent window
+under a single `output` array, not `output1`/`output2`) and returns
+program-trading (프로그램) flow nowhere in its fields - see
+`app/stock_radar/investor_flow.py` for why that's a documented, not
+silent, gap.
 """
 
 from __future__ import annotations
@@ -56,10 +66,12 @@ import httpx
 from app.integrations.kis.auth import KisAuth
 from app.integrations.kis.errors import KisApiError
 from app.models.domain import AssetType, Candle, Exchange, Market, Quote
+from app.stock_radar.investor_flow import InvestorFlowBar
 
 _TR_ID_CURRENT_PRICE = "FHKST01010100"
 _TR_ID_DAILY_CHART_PRICE = "FHKST03010100"
 _TR_ID_DAILY_INDEX_CHART_PRICE = "FHKUP03500100"
+_TR_ID_INVESTOR_TREND = "FHKST01010900"
 
 _RATE_LIMIT_MSG_CD = "EGW00201"
 DEFAULT_MAX_REQUESTS_PER_SECOND = 2.0
@@ -182,6 +194,23 @@ class KisRestClient:
         candles.sort(key=lambda c: c.open_time)
         return candles
 
+    async def get_investor_trend(self, symbol: str) -> list[InvestorFlowBar]:
+        """Daily foreign/institutional net-buy share counts (P25) - see
+        module docstring for the field/endpoint provenance. Chronological
+        (oldest first), matching every other daily series in this class,
+        though unlike them this endpoint takes no date-range params - KIS
+        decides how much history to return.
+        """
+        body = await self._get(
+            "/uapi/domestic-stock/v1/quotations/inquire-investor",
+            _TR_ID_INVESTOR_TREND,
+            {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": symbol},
+        )
+        rows = body.get("output", [])
+        bars = [self._to_investor_flow_bar(row) for row in rows if row.get("stck_bsop_date")]
+        bars.sort(key=lambda b: b.date)
+        return bars
+
     async def _throttle(self) -> None:
         """Pace outgoing requests to at most `max_requests_per_second`,
         regardless of how many callers are dispatching concurrently - same
@@ -255,4 +284,15 @@ class KisRestClient:
             volume=float(row["acml_vol"]),
             open_time=trade_date,
             close_time=trade_date + timedelta(days=1),
+        )
+
+    def _to_investor_flow_bar(self, row: dict) -> InvestorFlowBar:
+        """`inquire-investor` rows use `frgn_ntby_qty`/`orgn_ntby_qty`
+        (외국인/기관 순매수 수량) - confirmed against KIS's public sample
+        repo, see this module's docstring."""
+        trade_date = datetime.strptime(row["stck_bsop_date"], "%Y%m%d").replace(tzinfo=UTC)
+        return InvestorFlowBar(
+            date=trade_date,
+            foreign_net_qty=float(row["frgn_ntby_qty"]),
+            institution_net_qty=float(row["orgn_ntby_qty"]),
         )

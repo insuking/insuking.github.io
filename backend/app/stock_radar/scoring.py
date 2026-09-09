@@ -1,23 +1,33 @@
-"""PRE-BREAKOUT scoring engine (P23).
+"""PRE-BREAKOUT scoring engine (P23, extended in P25).
 
 Weighted 0-100 composite over the price/volume-based signals this phase
 can honestly compute today, from the spec's own 100-point table:
 
     가격압축(14) 거래량초기증가(12) 거래대금증가(8) 20일고점접근(8)
-    ATR구조(6) OBV상승(7) 시장상대강도(10)  = 65 points implemented here
+    ATR구조(6) OBV상승(7) 시장상대강도(10)  = 65 points implemented in P23
 
-Three categories from that same table - 외국인/기관/프로그램 수급 (19pt),
-업종 상대강도 (8pt), Catalyst (8pt) = 35pt - need data sources this project
-does not have yet (a KIS investor-flow feed, a sector index feed, a DART/
-news collector) and are deliberately deferred to P24/P25 rather than faked
-here. `SCORE_MAX_AVAILABLE` (65.0) is the honest denominator until those
-land - never treat a 65/65 score from this module as 100/100, and never
-report `total_score` without also reporting `max_available` next to it.
+P25 adds a 12-point `institutional_flow` factor (외국인+기관 순매수, via
+`app/stock_radar/investor_flow.py` and `KisRestClient.get_investor_trend()`)
+- a partial implementation of the spec's 19pt "외국인/기관/프로그램 수급"
+category: program-trading (프로그램) flow is a separate KIS feed this
+project hasn't touched, so this factor only covers two of the three
+sub-signals. It's scored only when a caller actually supplies
+`investor_flow_bars` to `score_prebreakout()` - callers that don't (e.g.
+existing tests, or a future backtest without flow history) get exactly
+the old 65-point ceiling back, never a silently-changed denominator.
 
-No new feature-calculation logic lives here beyond what P23 specifically
-needed (see app/radar/features.py's `compression_score`/`obv_slope`/
-`distance_to_high` and app/technical/indicators.py's `atr`) - this module
-is only the weighting/composition layer, the same shape as P6's
+Two categories from the spec's table - 업종 상대강도 (8pt), Catalyst (8pt)
+= 16pt - still need data sources this project does not have yet (a sector
+index feed, a DART/news collector) and are deliberately deferred to a
+future phase (P26+) rather than faked here. Always report `total_score`
+next to its own `max_available`, never against the spec's full 100 unless
+every category was actually scored for that call.
+
+No new feature-calculation logic lives here beyond what P23/P25
+specifically needed (see app/radar/features.py's `compression_score`/
+`obv_slope`/`distance_to_high`, app/technical/indicators.py's `atr`, and
+app/stock_radar/investor_flow.py's `net_buy_day_ratio`) - this module is
+only the weighting/composition layer, the same shape as P6's
 `score_recommendation()`.
 """
 
@@ -34,6 +44,7 @@ from app.radar.features import (
     relative_volume,
     turnover_acceleration,
 )
+from app.stock_radar.investor_flow import InvestorFlowBar, net_buy_day_ratio
 from app.technical.indicators import atr
 
 MODEL_VERSION = "prebreakout-v1-p23"
@@ -46,6 +57,7 @@ DEFAULT_ATR_LOOKBACK = 60
 DEFAULT_OBV_WINDOW = 10
 DEFAULT_COMPRESSION_WINDOW = 20
 DEFAULT_COMPRESSION_LOOKBACK = 60
+DEFAULT_FLOW_WINDOW = 10
 
 # Ideal "early volume increase" band per the spec: 1.3x~3x average - too
 # far below isn't yet a signal, too far above is already a breakout in
@@ -63,7 +75,15 @@ _DISTANCE_ZERO_AT = 0.20
 class PreBreakoutWeights:
     """A named, versionable weight set - `model_weight_versions` (P23 DB
     schema) persists these so a later weekly-learning phase can propose a
-    new version rather than mutating this default in place."""
+    new version rather than mutating this default in place.
+
+    `institutional_flow` (P25) is deliberately excluded from `total` below:
+    it's only awarded when a caller passes `investor_flow_bars` to
+    `score_prebreakout()`, so keeping it out of `total` means
+    `SCORE_MAX_AVAILABLE` (and every existing caller that doesn't pass flow
+    data yet) keeps meaning exactly what it meant before P25 - see
+    `score_prebreakout()`'s own `max_available` computation.
+    """
 
     compression: float = 14.0
     volume_increase: float = 12.0
@@ -72,6 +92,7 @@ class PreBreakoutWeights:
     atr_structure: float = 6.0
     obv_rising: float = 7.0
     market_relative_strength: float = 10.0
+    institutional_flow: float = 12.0
 
     @property
     def total(self) -> float:
@@ -87,8 +108,9 @@ class PreBreakoutWeights:
 
 
 DEFAULT_WEIGHTS = PreBreakoutWeights()
-SCORE_MAX_AVAILABLE = DEFAULT_WEIGHTS.total  # 65.0
-SCORE_MAX_FULL_SPEC = 100.0  # once P24 (flow, 19pt) + P25 (catalyst, 8pt) + sector RS (8pt) land
+SCORE_MAX_AVAILABLE = DEFAULT_WEIGHTS.total  # 65.0 - price/volume factors only, no investor-flow data
+SCORE_MAX_WITH_INSTITUTIONAL_FLOW = SCORE_MAX_AVAILABLE + DEFAULT_WEIGHTS.institutional_flow  # 77.0
+SCORE_MAX_FULL_SPEC = 100.0  # once program-trading flow + a future catalyst (8pt) + sector RS (8pt) phase land
 
 
 @dataclass
@@ -130,12 +152,20 @@ def score_prebreakout(
     candles: list[Candle],
     benchmark_candles: list[Candle],
     weights: PreBreakoutWeights = DEFAULT_WEIGHTS,
+    investor_flow_bars: list[InvestorFlowBar] | None = None,
 ) -> PreBreakoutScore | None:
     """`candles`/`benchmark_candles`: chronological daily bars, long enough
     for a 20-bar Bollinger/high window and a 60-bar ATR lookback (~65+
     bars is a safe minimum). Returns `None` rather than a partial or
     fabricated score when there isn't enough history yet - the same
     "never guess" gating `build_recommendation()` (P6) already uses.
+
+    `investor_flow_bars` (P25, optional): when supplied, adds an
+    `institutional_flow` factor worth `weights.institutional_flow` and
+    raises this call's `max_available` to `SCORE_MAX_WITH_INSTITUTIONAL_FLOW`
+    - see `PreBreakoutWeights.institutional_flow`'s docstring for why that
+    weight isn't part of `weights.total`. When omitted (the default),
+    `max_available` is exactly `weights.total` - unchanged from before P25.
     """
     min_bars = DEFAULT_ATR_LOOKBACK + DEFAULT_ATR_WINDOW
     if len(candles) < min_bars or len(benchmark_candles) < 2:
@@ -144,6 +174,7 @@ def score_prebreakout(
     positive: list[ScoreFactor] = []
     negative: list[ScoreFactor] = []
     total = 0.0
+    max_available = weights.total + (weights.institutional_flow if investor_flow_bars is not None else 0.0)
 
     # 가격압축 (box compression)
     compression = compression_score(candles, window=DEFAULT_COMPRESSION_WINDOW, lookback=DEFAULT_COMPRESSION_LOOKBACK)
@@ -233,10 +264,29 @@ def score_prebreakout(
     elif rs < -0.03:
         negative.append(ScoreFactor("market_relative_weakness", 0.0, f"벤치마크 대비 {rs * 100:.1f}%p 저조"))
 
+    # 외국인+기관 수급 (P25, only when the caller supplied flow history -
+    # see this function's own docstring and PreBreakoutWeights.institutional_flow)
+    if investor_flow_bars is not None:
+        flow_ratio = net_buy_day_ratio(investor_flow_bars, window=DEFAULT_FLOW_WINDOW)
+        if flow_ratio is not None:
+            points = flow_ratio * weights.institutional_flow
+            total += points
+            if flow_ratio >= 0.7:
+                buy_days = round(flow_ratio * DEFAULT_FLOW_WINDOW)
+                positive.append(
+                    ScoreFactor(
+                        "institutional_flow",
+                        points,
+                        f"최근 {DEFAULT_FLOW_WINDOW}일 중 {buy_days}일 외국인+기관 순매수",
+                    )
+                )
+            elif flow_ratio <= 0.2:
+                negative.append(ScoreFactor("institutional_outflow", 0.0, "외국인+기관 매도 우위"))
+
     return PreBreakoutScore(
         symbol=symbol,
         total_score=total,
-        max_available=weights.total,
+        max_available=max_available,
         positive=positive,
         negative=negative,
     )

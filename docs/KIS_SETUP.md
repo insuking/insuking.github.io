@@ -121,3 +121,25 @@ numbers against it. `scripts/scan_stocks.py` still falls back to a flat
 placeholder benchmark (with a printed warning) if this call ever raises,
 as a safety net, but that path is no longer expected to trigger in
 practice.
+
+## Investor flow (외국인/기관 순매수) - P25
+
+`KisRestClient.get_investor_trend(symbol)` calls `inquire-investor` (tr_id
+`FHKST01010900`) for daily foreign (외국인) and institutional (기관)
+net-buy share counts - `frgn_ntby_qty`/`orgn_ntby_qty`, confirmed against
+KIS's public sample repo (`examples_llm/domestic_stock/inquire_investor/`)
+but not yet against a live response from this project's own credentials.
+Unlike the daily-price endpoints it takes no date range and returns a
+flat `output` array (not `output1`/`output2`).
+
+This does **not** cover program-trading (프로그램매매) net flow - a
+separate KIS feed this project hasn't touched - so
+`app/stock_radar/scoring.py`'s `institutional_flow` factor (12pt) is a
+partial, honestly-labeled implementation of the master spec's 19pt
+"외국인/기관/프로그램 수급" category, not the full thing.
+`scripts/scan_stocks.py`'s scan now fetches this per symbol (one extra
+throttled call each) and feeds it into scoring automatically - when it
+succeeds, scores show up to 77/77 instead of 65/65 (`institutional_flow`
+factor lines in the output); if `get_investor_trend()` raises for a
+symbol, that symbol is simply scored without the flow factor (same
+65-point ceiling as before P25), not a crashed scan.

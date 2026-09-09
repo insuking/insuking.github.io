@@ -19,6 +19,7 @@ from app.integrations.kis.auth import KisAuth
 from app.integrations.kis.rest_client import KisRestClient
 from app.models.domain import Candle
 from app.stock_radar.scan import rank_prebreakout_candidates, scan_stock_universe
+from app.stock_radar.scoring import SCORE_MAX_AVAILABLE, SCORE_MAX_WITH_INSTITUTIONAL_FLOW
 
 pytestmark = pytest.mark.P23
 
@@ -125,6 +126,17 @@ async def test_scan_stock_universe_fetches_real_prices_and_ranks_them() -> None:
                     "output2": list(reversed(output2)),
                 },
             )
+        if request.url.path == "/uapi/domestic-stock/v1/quotations/inquire-investor":
+            return httpx.Response(
+                200,
+                json={
+                    "rt_cd": "0",
+                    "output": [
+                        {"stck_bsop_date": (_START + timedelta(days=i)).strftime("%Y%m%d"), "frgn_ntby_qty": "100", "orgn_ntby_qty": "50"}
+                        for i in range(10)
+                    ],
+                },
+            )
         raise AssertionError(f"unexpected request: {request.url}")
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://mock.kis.test")
@@ -141,3 +153,53 @@ async def test_scan_stock_universe_fetches_real_prices_and_ranks_them() -> None:
     assert [r.symbol for r in results] == ["005930", "000660"]
     assert results[0].total_score > results[1].total_score
     assert names == {"005930": "삼성전자", "000660": "SK하이닉스"}
+    # investor-flow data was fetched and fed into scoring (P25) - ceiling
+    # includes institutional_flow, not just the price/volume factors.
+    assert results[0].max_available == pytest.approx(SCORE_MAX_WITH_INSTITUTIONAL_FLOW)
+
+
+@pytest.mark.asyncio
+async def test_scan_stock_universe_degrades_gracefully_when_investor_trend_fails() -> None:
+    """`get_investor_trend()`'s field layout isn't independently verified
+    yet (see rest_client.py's module docstring) - a real KIS error there
+    must not crash the whole scan, since price/volume scoring (P23) is
+    already known-good. Coverage for the try/except in scan_stock_universe()."""
+    settings = Settings(kis_app_key="test-key", kis_app_secret="test-secret")  # type: ignore[call-arg]
+    bars = _textbook_setup_bars()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth2/tokenP":
+            return httpx.Response(200, json={"access_token": "test-token", "expires_in": 86400})
+        if request.url.path == "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice":
+            output2 = [
+                {
+                    "stck_bsop_date": (_START + timedelta(days=i)).strftime("%Y%m%d"),
+                    "stck_oprc": str(o),
+                    "stck_hgpr": str(h),
+                    "stck_lwpr": str(low),
+                    "stck_clpr": str(c),
+                    "acml_vol": str(v),
+                }
+                for i, (o, h, low, c, v) in enumerate(bars)
+            ]
+            return httpx.Response(
+                200, json={"rt_cd": "0", "output1": {}, "output2": list(reversed(output2))}
+            )
+        if request.url.path == "/uapi/domestic-stock/v1/quotations/inquire-investor":
+            # Simulates a real KIS rejection (e.g. an unverified field/param mismatch).
+            return httpx.Response(200, json={"rt_cd": "1", "msg1": "조회 실패", "output": []})
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://mock.kis.test")
+    rest = KisRestClient(client, KisAuth(client=client, settings=settings))
+
+    results, _names = await scan_stock_universe(
+        rest,
+        symbols=["005930"],
+        benchmark_candles=_flat_benchmark(75),
+        start_date="20260101",
+        end_date="20260314",
+    )
+
+    assert len(results) == 1
+    assert results[0].max_available == pytest.approx(SCORE_MAX_AVAILABLE)

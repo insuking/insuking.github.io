@@ -110,3 +110,22 @@ async def test_real_kis_kospi_index_daily_prices() -> None:
         assert len(candles) > 0
         assert all(c.close > 0 for c in candles)
         assert all(c.high >= c.low for c in candles)
+
+
+@pytest.mark.asyncio
+async def test_real_kis_investor_trend_for_samsung_electronics() -> None:
+    """`get_investor_trend()` (P25) - `inquire-investor`'s field layout
+    (`frgn_ntby_qty`/`orgn_ntby_qty`) was confirmed against KIS's public
+    sample repo, not yet against a live payload from this project's own
+    credentials - this is that verification. If it fails, fix the field
+    names in rest_client.py's `get_investor_trend()`/`_to_investor_flow_bar()`."""
+    settings = get_settings()
+    async with httpx.AsyncClient(base_url=settings.kis_rest_base_url, timeout=10.0) as client:
+        auth = KisAuth(client=client, settings=settings)
+        rest = KisRestClient(client, auth)
+
+        bars = await rest.get_investor_trend("005930")
+
+        assert len(bars) > 0
+        # chronological (oldest first), per this method's documented contract
+        assert bars == sorted(bars, key=lambda b: b.date)

@@ -326,3 +326,61 @@ async def test_get_index_daily_prices_uses_the_dedicated_index_endpoint() -> Non
     index_request = next(r for r in requests if "inquire-daily-indexchartprice" in str(r.url))
     assert index_request.url.params["FID_COND_MRKT_DIV_CODE"] == "U"
     assert index_request.url.params["FID_INPUT_ISCD"] == "0001"
+
+
+@pytest.mark.asyncio
+async def test_get_investor_trend_parses_foreign_and_institution_net_buy_and_sorts_chronologically() -> None:
+    """`inquire-investor` (P25) returns a single flat `output` array (not
+    output1/output2 like the daily-price endpoints) - confirmed against
+    KIS's public sample repo, see rest_client.py's module docstring."""
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/oauth2/tokenP":
+            return httpx.Response(200, json={"access_token": "test-token", "expires_in": 86400})
+        if request.url.path == "/uapi/domestic-stock/v1/quotations/inquire-investor":
+            assert request.headers["tr_id"] == "FHKST01010900"
+            return httpx.Response(
+                200,
+                json={
+                    "rt_cd": "0",
+                    # KIS convention (other daily endpoints return most-recent-first): assume the same here.
+                    "output": [
+                        {"stck_bsop_date": "20260107", "frgn_ntby_qty": "1000", "orgn_ntby_qty": "-500"},
+                        {"stck_bsop_date": "20260106", "frgn_ntby_qty": "-200", "orgn_ntby_qty": "300"},
+                    ],
+                },
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://mock.kis.test")
+    rest = KisRestClient(client, KisAuth(client=client, settings=_settings()))
+
+    bars = await rest.get_investor_trend("005930")
+
+    assert len(bars) == 2
+    assert bars[0].foreign_net_qty == -200.0  # oldest (20260106) first
+    assert bars[0].institution_net_qty == 300.0
+    assert bars[1].foreign_net_qty == 1000.0  # newest (20260107) last
+    assert bars[1].institution_net_qty == -500.0
+
+    investor_request = next(r for r in requests if "inquire-investor" in str(r.url))
+    assert investor_request.url.params["FID_COND_MRKT_DIV_CODE"] == "J"
+    assert investor_request.url.params["FID_INPUT_ISCD"] == "005930"
+
+
+@pytest.mark.asyncio
+async def test_get_investor_trend_raises_on_non_zero_rt_cd() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth2/tokenP":
+            return httpx.Response(200, json={"access_token": "test-token", "expires_in": 86400})
+        if request.url.path == "/uapi/domestic-stock/v1/quotations/inquire-investor":
+            return httpx.Response(200, json={"rt_cd": "1", "msg1": "조회 실패", "output": []})
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://mock.kis.test")
+    rest = KisRestClient(client, KisAuth(client=client, settings=_settings()))
+
+    with pytest.raises(KisApiError):
+        await rest.get_investor_trend("BADCODE")
