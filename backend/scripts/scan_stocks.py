@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
-"""Run a real KIS PRE-BREAKOUT stock scan (P23, extended in P25).
+"""Run a real KIS PRE-BREAKOUT stock scan (P23, extended in P25/P26).
 
 Real HTTP requests to KIS (requires `KIS_APP_KEY`/`KIS_APP_SECRET` - see
-docs/KIS_SETUP.md). Read-only: writes nothing to the database yet - P23's
-DB tables (`securities`, `radar_scores`, `radar_features`) exist (see
-app/db/models.py) but persistence wiring is a fast-follow, not blocked on
-anything here.
+docs/KIS_SETUP.md). Now persists results: `securities` (upsert) and
+`radar_scores` (one row per symbol per run) via
+`app/stock_radar/persistence.py`'s `persist_scan_results()` -
+`radar_features` is still not written (see that module's docstring for
+why). If the DB write fails for any reason (unreachable Postgres, schema
+drift), this script prints a warning and still shows the scan results -
+persistence failing must never hide a real, already-computed scan.
 
 **Universe**: `STOCK_SCAN_SYMBOLS` (comma-separated KRX 6-digit codes) if
 set, else a small default list of large, liquid KOSPI names - not the
 full KOSPI/KOSDAQ universe. A real full-universe scan needs KIS's KRX
 symbol master file, which this project has not built a verified
 downloader/parser for yet (see app/stock_radar/scan.py's module
-docstring) - seed `securities` by hand or extend this script once that
-exists.
+docstring) - extend this script's symbol list (or set
+`STOCK_SCAN_SYMBOLS`) once that exists; `securities` rows are created
+automatically for whatever symbols this script scans, no manual seeding
+needed.
 
 **Benchmark**: this script attempts a real KOSPI index fetch via
 `KisRestClient.get_index_daily_prices()` - confirmed working by a real
@@ -53,11 +58,13 @@ sys.path.insert(0, ".")
 import httpx
 
 from app.core.config import get_settings
+from app.db.session import session_scope
 from app.integrations.kis.auth import KisAuth
 from app.integrations.kis.errors import KisApiError
 from app.integrations.kis.rest_client import KOSPI_INDEX_CODE, KisRestClient
-from app.models.domain import Candle
+from app.models.domain import Candle, Market
 from app.radar.regime import MarketRegime, classify_market_regime
+from app.stock_radar.persistence import persist_scan_results
 from app.stock_radar.scan import scan_stock_universe
 
 _DEFAULT_SYMBOLS = [
@@ -144,6 +151,13 @@ async def run() -> None:
             print(f"  + {factor.detail}")
         for factor in r.negative:
             print(f"  - {factor.detail}")
+
+    try:
+        async with session_scope() as session:
+            run_id = await persist_scan_results(session, results, names, market=Market.KOSPI)
+        print(f"\nPersisted {len(results)} score(s) to the database (scan_run_id={run_id}).")
+    except Exception as exc:  # noqa: BLE001 - a DB failure must not hide the scan results already printed above
+        print(f"\nWARNING: failed to persist scan results to the database ({exc!r}).")
 
 
 if __name__ == "__main__":
