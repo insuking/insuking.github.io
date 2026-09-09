@@ -4,7 +4,7 @@ import { TABS } from "../nav";
 import { NavBar } from "./NavBar";
 
 describe("NavBar", () => {
-  it("renders all six P21 tabs with 44px-minimum touch targets", () => {
+  it("renders every tab (P21's original six plus P28's stock radar) with 44px-minimum touch targets", () => {
     render(<NavBar active="radar" />);
     for (const tab of TABS) {
       const link = screen.getByRole("link", { name: tab.label });

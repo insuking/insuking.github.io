@@ -1,14 +1,21 @@
 /**
- * Tab navigation (P21) - docs/MASTER_SPEC.md P21: "nav: Radar / 추천 /
- * 포지션 / 시장 / 성과 / 시스템". Hash-based rather than a router
- * dependency (see App.tsx's existing comment on `/approve/:token` for why
- * this project has stayed dependency-free here) - `#/positions` etc. still
- * gives real back-button/bookmark support without pulling in react-router
- * for six flat, non-nested routes.
+ * Tab navigation (P21, extended in P28). Originally docs/MASTER_SPEC.md
+ * P21's six flat tabs: "Radar / 추천 / 포지션 / 시장 / 성과 / 시스템" -
+ * `stocks` (종목레이더) is a P28 addition, since the stock radar (P23+)
+ * postdates that original list and produces its own kind of candidate
+ * (`PreBreakoutScore`, a ranking signal) rather than the `Recommendation`
+ * (entry/stop/target trade plan) the existing 추천 tab shows - see
+ * `StockRadarPage.tsx`'s own docstring for why those stay separate tabs.
+ * Hash-based rather than a router dependency (see App.tsx's existing
+ * comment on `/approve/:token` for why this project has stayed
+ * dependency-free here) - `#/positions` etc. still gives real
+ * back-button/bookmark support without pulling in react-router for seven
+ * flat, non-nested routes.
  */
 
 export const TABS = [
   { id: "radar", label: "Radar", hash: "#/radar" },
+  { id: "stocks", label: "종목레이더", hash: "#/stocks" },
   { id: "recommendations", label: "추천", hash: "#/recommendations" },
   { id: "positions", label: "포지션", hash: "#/positions" },
   { id: "market", label: "시장", hash: "#/market" },

@@ -39,6 +39,7 @@ import uuid
 from dataclasses import asdict
 from datetime import UTC, datetime
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import RadarScoreRow, SecurityRow
@@ -106,3 +107,24 @@ async def persist_scan_results(
 
     await session.commit()
     return run_id
+
+
+async def get_latest_scan(session: AsyncSession) -> list[RadarScoreRow]:
+    """The most recent `scan_run_id`'s `RadarScoreRow` rows, ordered by
+    rank - shared by `scripts/reconfirm_entries.py` (P27) and the
+    `/api/stock-radar` read endpoint (P28) so both agree on "what counts
+    as the latest scan" from one place rather than each running its own
+    slightly-different query. Empty list, not an error, when no scan has
+    ever run yet - the honest state of a fresh deployment.
+    """
+    latest_run_id = (
+        await session.execute(select(RadarScoreRow.scan_run_id).order_by(RadarScoreRow.created_at.desc()).limit(1))
+    ).scalar_one_or_none()
+    if latest_run_id is None:
+        return []
+    rows = (
+        await session.execute(
+            select(RadarScoreRow).where(RadarScoreRow.scan_run_id == latest_run_id).order_by(RadarScoreRow.rank)
+        )
+    ).scalars().all()
+    return list(rows)

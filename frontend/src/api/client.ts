@@ -2,6 +2,7 @@ import type { CallbackResponse, LoginUrlResponse } from "../types/auth";
 import type { ApprovalDecisionType, ApprovalDetail, DecideResult } from "../types/approval";
 import type { DashboardPerformance, DashboardSummary, IncidentOut } from "../types/dashboard";
 import type { ReadinessResponse } from "../types/health";
+import type { StockRadarLatest } from "../types/stockRadar";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
@@ -88,6 +89,14 @@ export async function fetchPerformance(): Promise<DashboardPerformance> {
     throw new ApprovalApiError(response.status, await _readDetail(response));
   }
   return (await response.json()) as DashboardPerformance;
+}
+
+export async function fetchStockRadarLatest(): Promise<StockRadarLatest> {
+  const response = await fetch(`${API_BASE_URL}/api/stock-radar/latest`);
+  if (!response.ok) {
+    throw new ApprovalApiError(response.status, await _readDetail(response));
+  }
+  return (await response.json()) as StockRadarLatest;
 }
 
 export async function fetchKakaoLoginUrl(): Promise<LoginUrlResponse> {

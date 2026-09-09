@@ -9,6 +9,7 @@ import { MarketPage } from "./pages/MarketPage";
 import { PerformancePage } from "./pages/PerformancePage";
 import { PositionsPage } from "./pages/PositionsPage";
 import { RecommendationsPage } from "./pages/RecommendationsPage";
+import { StockRadarPage } from "./pages/StockRadarPage";
 import { SystemPage } from "./pages/SystemPage";
 import "./App.css";
 
@@ -27,6 +28,7 @@ function isKakaoCallbackRoute(pathname: string): boolean {
 
 const TAB_PAGES: Record<TabId, ComponentType> = {
   radar: HomePage,
+  stocks: StockRadarPage,
   recommendations: RecommendationsPage,
   positions: PositionsPage,
   market: MarketPage,

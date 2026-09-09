@@ -32,8 +32,6 @@ from datetime import UTC, datetime, timedelta
 sys.path.insert(0, ".")
 
 import httpx
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.db.models import RadarScoreRow
@@ -42,24 +40,11 @@ from app.integrations.kis.auth import KisAuth
 from app.integrations.kis.errors import KisApiError
 from app.integrations.kis.rest_client import KOSPI_INDEX_CODE, KisRestClient
 from app.radar.regime import MarketRegime, classify_market_regime
+from app.stock_radar.persistence import get_latest_scan
 from app.stock_radar.scan import reconfirm_candidates
 from app.stock_radar.scoring import PreBreakoutScore
 
 _REGIME_HISTORY_DAYS = 30  # only need enough for a 20-day moving-average regime read
-
-
-async def _load_latest_scan(session: AsyncSession) -> list[RadarScoreRow]:
-    latest_run_id = (
-        await session.execute(select(RadarScoreRow.scan_run_id).order_by(RadarScoreRow.created_at.desc()).limit(1))
-    ).scalar_one_or_none()
-    if latest_run_id is None:
-        return []
-    rows = (
-        await session.execute(
-            select(RadarScoreRow).where(RadarScoreRow.scan_run_id == latest_run_id).order_by(RadarScoreRow.rank)
-        )
-    ).scalars().all()
-    return list(rows)
 
 
 def _to_score(row: RadarScoreRow) -> PreBreakoutScore | None:
@@ -83,7 +68,7 @@ async def run() -> None:
         return
 
     async with session_scope() as session:
-        rows = await _load_latest_scan(session)
+        rows = await get_latest_scan(session)
 
     if not rows:
         print("No stored scan found - run scripts/scan_stocks.py first.")

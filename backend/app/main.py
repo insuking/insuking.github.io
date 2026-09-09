@@ -6,6 +6,7 @@ from app.api.auth import router as auth_router
 from app.api.dashboard import router as dashboard_router
 from app.api.domain_schema import router as domain_schema_router
 from app.api.health import router as health_router
+from app.api.stock_radar import router as stock_radar_router
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -24,6 +25,7 @@ app.include_router(domain_schema_router)
 app.include_router(approvals_router)
 app.include_router(auth_router)
 app.include_router(dashboard_router)
+app.include_router(stock_radar_router)
 
 
 @app.get("/")
