@@ -57,5 +57,27 @@ services:
     depends_on:
       - backend
 
+  # P32: runs scripts/scheduler.py instead of uvicorn, on the same image as
+  # `backend` (migrations already ran there - see backend's `depends_on:
+  # condition: service_healthy` below) so the crypto/stock scan-and-reconfirm
+  # scripts actually run periodically instead of needing someone to remember
+  # to `docker compose exec backend python scripts/scan_crypto.py` by hand -
+  # see scripts/scheduler.py's own docstring for why that gap is exactly why
+  # recommendations were never appearing in a real deployment.
+  scheduler:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+asyncpg://radar:radar@postgres:5432/radar
+      REDIS_URL: redis://redis:6379/0
+    command: ["python", "scripts/scheduler.py"]
+    depends_on:
+      backend:
+        condition: service_healthy
+
 volumes:
   radar_postgres_data:
