@@ -78,6 +78,12 @@ correct, not yet a full multi-symbol/multi-day confirmation. If a future
 run finds a field mismatch, `tests/backend/test_kis_rest_client.py` and
 `rest_client.py`'s `_to_daily_candle()` are where to fix it.
 
+`KisRestClient.get_daily_prices_with_name()` reuses that same call
+(no extra round trip) to also return the Korean stock name from
+`output1.hts_kor_isnm`, confirmed against KIS's public sample repo but not
+yet against a live response from this project's own credentials.
+`scripts/scan_stocks.py` prints it next to each symbol when available.
+
 ## Rate limit
 
 Confirmed by that same real run: unthrottled sequential `get_daily_prices()`
@@ -106,14 +112,12 @@ confirmed indices are a **separate endpoint**,
 `inquire-daily-indexchartprice` (tr_id `FHKUP03500100`), whose daily rows
 use `bstp_nmix_*` (업종지수) field names instead of a stock row's `stck_*`
 fields. `rest_client.py` now calls that endpoint with a dedicated
-`_to_daily_index_candle()` parser. Still not independently confirmed
-against a live response from this project's own credentials - only
-against KIS's public sample code.
+`_to_daily_index_candle()` parser.
 
-`scripts/scan_stocks.py` calls this for its KOSPI benchmark and falls back
-to a flat placeholder (with a printed warning) if it raises. The next real
-docker-compose run against this method is the actual verification: if it
-succeeds, this note should say so the same way the `get_daily_prices()`
-note above does; if it still raises `KisApiError`/`KeyError`, fix
-`get_index_daily_prices()`/`_to_daily_index_candle()` in `rest_client.py`
-from the real error.
+**Update, confirmed by a real docker-compose run (2026-09)**: the
+corrected endpoint works - `scripts/scan_stocks.py` printed "Using real
+KOSPI index benchmark (50 candles)." and scored real relative-strength
+numbers against it. `scripts/scan_stocks.py` still falls back to a flat
+placeholder benchmark (with a printed warning) if this call ever raises,
+as a safety net, but that path is no longer expected to trigger in
+practice.

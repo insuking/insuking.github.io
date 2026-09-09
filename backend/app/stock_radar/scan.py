@@ -76,18 +76,27 @@ async def scan_stock_universe(
     end_date: str,
     weights: PreBreakoutWeights = DEFAULT_WEIGHTS,
     top_n: int = 30,
-) -> list[PreBreakoutScore]:
+) -> tuple[list[PreBreakoutScore], dict[str, str]]:
     """Fetch each symbol's real daily price history and rank them. `symbols`
     is caller-supplied rather than pulled from a KRX master-file download:
     this project has no verified master-file parser yet (see
     docs/KIS_SETUP.md and `app/db/models.py`'s `SecurityRow` for the
     `securities` table this would populate) - seed it manually or via
     `scripts/scan_stocks.py`'s symbol list for now.
+
+    Also returns a `symbol -> Korean name` dict (from the same daily-price
+    call, via `KisRestClient.get_daily_prices_with_name()` - no extra
+    round trip) for display purposes; a symbol is omitted if KIS didn't
+    return a name for it.
     """
     symbol_candles: dict[str, list[Candle]] = {}
+    names: dict[str, str] = {}
     for symbol in symbols:
-        candles = await rest.get_daily_prices(symbol, start_date, end_date)
+        candles, name = await rest.get_daily_prices_with_name(symbol, start_date, end_date)
         if candles:
             symbol_candles[symbol] = candles
+        if name:
+            names[symbol] = name
 
-    return rank_prebreakout_candidates(symbol_candles, benchmark_candles, weights=weights, top_n=top_n)
+    results = rank_prebreakout_candidates(symbol_candles, benchmark_candles, weights=weights, top_n=top_n)
+    return results, names

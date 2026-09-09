@@ -120,6 +120,21 @@ class KisRestClient:
         for this endpoint, so the sort below is doing real work, not a
         no-op.
         """
+        candles, _name = await self.get_daily_prices_with_name(symbol, start_date, end_date, adjusted)
+        return candles
+
+    async def get_daily_prices_with_name(
+        self, symbol: str, start_date: str, end_date: str, adjusted: bool = True
+    ) -> tuple[list[Candle], str | None]:
+        """Same request as `get_daily_prices()`, also returning the Korean
+        stock name (`hts_kor_isnm`, confirmed against KIS's public sample
+        repo) from `output1` - which `get_daily_prices()` fetches but
+        discards. A separate method rather than changing
+        `get_daily_prices()`'s return shape, so existing callers that only
+        want candles don't have to unpack a tuple; callers that also want a
+        display name (e.g. `scripts/scan_stocks.py`) get it for free,
+        without a second rate-limited round trip.
+        """
         body = await self._get(
             "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
             _TR_ID_DAILY_CHART_PRICE,
@@ -132,10 +147,11 @@ class KisRestClient:
                 "FID_ORG_ADJ_PRC": "0" if adjusted else "1",
             },
         )
+        name = (body.get("output1") or {}).get("hts_kor_isnm") or None
         rows = body.get("output2", [])
         candles = [self._to_daily_candle(row, symbol) for row in rows if row.get("stck_bsop_date")]
         candles.sort(key=lambda c: c.open_time)
-        return candles
+        return candles, name
 
     async def get_index_daily_prices(self, index_code: str, start_date: str, end_date: str) -> list[Candle]:
         """Daily KOSPI/KOSDAQ index candles - this is the piece

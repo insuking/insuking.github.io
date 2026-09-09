@@ -239,6 +239,46 @@ async def test_get_daily_prices_skips_rows_missing_a_trade_date() -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_daily_prices_with_name_returns_the_korean_stock_name_from_output1() -> None:
+    client = _mock_daily_client(
+        auth_body={"access_token": "test-token", "expires_in": 86400},
+        daily_body={
+            "rt_cd": "0",
+            "output1": {"hts_kor_isnm": "삼성전자"},
+            "output2": [
+                {
+                    "stck_bsop_date": "20260107",
+                    "stck_oprc": "72000",
+                    "stck_hgpr": "73000",
+                    "stck_lwpr": "71500",
+                    "stck_clpr": "72500",
+                    "acml_vol": "1200000",
+                },
+            ],
+        },
+    )
+    rest = KisRestClient(client, KisAuth(client=client, settings=_settings()))
+
+    candles, name = await rest.get_daily_prices_with_name("005930", "20260101", "20260107")
+
+    assert len(candles) == 1
+    assert name == "삼성전자"
+
+
+@pytest.mark.asyncio
+async def test_get_daily_prices_with_name_returns_none_when_output1_has_no_name() -> None:
+    client = _mock_daily_client(
+        auth_body={"access_token": "test-token", "expires_in": 86400},
+        daily_body={"rt_cd": "0", "output1": {}, "output2": []},
+    )
+    rest = KisRestClient(client, KisAuth(client=client, settings=_settings()))
+
+    _candles, name = await rest.get_daily_prices_with_name("005930", "20260101", "20260107")
+
+    assert name is None
+
+
+@pytest.mark.asyncio
 async def test_get_index_daily_prices_uses_the_dedicated_index_endpoint() -> None:
     """A real docker-compose run against real KIS servers proved indices
     are NOT `get_daily_prices()`'s endpoint with a different market-division

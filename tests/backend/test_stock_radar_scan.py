@@ -97,6 +97,7 @@ async def test_scan_stock_universe_fetches_real_prices_and_ranks_them() -> None:
         "005930": _textbook_setup_bars(),
         "000660": _flat_bars(),
     }
+    names_by_symbol = {"005930": "삼성전자", "000660": "SK하이닉스"}
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/oauth2/tokenP":
@@ -116,13 +117,20 @@ async def test_scan_stock_universe_fetches_real_prices_and_ranks_them() -> None:
                 for i, (o, h, low, c, v) in enumerate(bars)
             ]
             # KIS convention (unverified - see rest_client.py): most-recent-first.
-            return httpx.Response(200, json={"rt_cd": "0", "output1": {}, "output2": list(reversed(output2))})
+            return httpx.Response(
+                200,
+                json={
+                    "rt_cd": "0",
+                    "output1": {"hts_kor_isnm": names_by_symbol[symbol]},
+                    "output2": list(reversed(output2)),
+                },
+            )
         raise AssertionError(f"unexpected request: {request.url}")
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://mock.kis.test")
     rest = KisRestClient(client, KisAuth(client=client, settings=settings))
 
-    results = await scan_stock_universe(
+    results, names = await scan_stock_universe(
         rest,
         symbols=["005930", "000660"],
         benchmark_candles=_flat_benchmark(75),
@@ -132,3 +140,4 @@ async def test_scan_stock_universe_fetches_real_prices_and_ranks_them() -> None:
 
     assert [r.symbol for r in results] == ["005930", "000660"]
     assert results[0].total_score > results[1].total_score
+    assert names == {"005930": "삼성전자", "000660": "SK하이닉스"}

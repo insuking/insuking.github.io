@@ -104,7 +104,7 @@ async def run() -> None:
             )
             benchmark_candles = _flat_benchmark(_HISTORY_DAYS)
 
-        results = await scan_stock_universe(
+        results, names = await scan_stock_universe(
             rest,
             symbols=symbols,
             benchmark_candles=benchmark_candles,
@@ -117,7 +117,8 @@ async def run() -> None:
         return
 
     for r in results:
-        print(f"{r.symbol}: {r.total_score:.1f} / {r.max_available:.0f}")
+        label = f"{r.symbol} ({names[r.symbol]})" if r.symbol in names else r.symbol
+        print(f"{label}: {r.total_score:.1f} / {r.max_available:.0f}")
         for factor in r.positive:
             print(f"  + {factor.detail}")
         for factor in r.negative:
