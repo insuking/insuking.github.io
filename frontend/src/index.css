@@ -1,3 +1,11 @@
+/* Pretendard - the de facto standard Korean UI font across Korean fintech/
+   tech apps (Toss included), self-hosted via the `pretendard` npm package
+   rather than a CDN so the app has no external runtime font dependency.
+   The variable-weight build is a single ~2MB woff2 covering every weight
+   the app uses (400/500/600/700 below), instead of separate per-weight
+   files. */
+@import "pretendard/dist/web/variable/pretendardvariable.css";
+
 :root {
   color-scheme: light;
 
@@ -35,8 +43,8 @@
   --radius-pill: 999px;
 
   --font-family:
-    -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", Roboto,
-    "Malgun Gothic", sans-serif;
+    "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI",
+    Roboto, "Malgun Gothic", sans-serif;
 }
 
 * {
@@ -52,5 +60,6 @@ body {
   background: var(--color-bg);
   color: var(--color-text);
   font-family: var(--font-family);
+  font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
 }
