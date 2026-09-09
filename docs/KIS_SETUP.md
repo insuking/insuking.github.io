@@ -163,16 +163,25 @@ actually happened to a real order" was judged a worse trade than admitting
 the gap - an order left `UNKNOWN` after a timeout must be checked by hand
 in the KIS HTS/app until this is built for real.
 
-Also **not built yet**: nothing in this project currently calls
-`KisExecutionProvider` automatically. Toss/Upbit (P15) have the same gap -
-`ApprovalService.decide()` only ever produces an APPROVED/REJECTED
-*decision* (see `app/approval/service.py`'s own module docstring); the
-orchestrator that would revalidate an approved recommendation (P14) and
-then actually call an execution provider has never been built for any
-broker in this project. Building `KisExecutionProvider` doesn't skip that
-gap, it just means KIS is ready to be wired in once that bridge exists -
-until then, every method here is only reachable by calling it directly
-(e.g. from a Python shell), not from anything a user does through the app.
+**Update (P29 continuation)**: the approval -> execution bridge described
+above as missing now exists - `app/approval/execution.py`'s
+`execute_approved_recommendation()` (broker-agnostic) plus
+`gather_kis_revalidation_input()` (KIS-specific), wired into
+`POST /api/approvals/{token}/decide` (`app/api/approvals.py`). A human's
+APPROVE/APPROVE_WITH_AMOUNT_CHANGE decision on a `STOCK` recommendation
+now re-runs P14's `revalidate()` against a fresh KIS quote/candles/risk
+state and, only if still `VALID`, calls `KisExecutionProvider.place_order()`
+for real (subject to the two safety switches above, both of which still
+default to safe). Toss/Upbit (P15) still have the gap described above -
+this bridge is broker-agnostic by construction (it takes a `place_order`
+callable, not a hardcoded provider) but nothing has built their own
+`gather_*_revalidation_input()` yet, so a CRYPTO recommendation's APPROVE
+still only ever produces the APPROVED/REJECTED decision, same as before.
+What this bridge still does *not* do: track a placed order to a real fill
+or open a `Position` from it (no live-broker fill poller exists yet), or
+re-check live buying power before sizing (reuses the recommendation's
+already-computed `expected_max_loss` - see `execution.py`'s own module
+docstring for both).
 
 **No automated real-connection test places, modifies, or cancels a real
 order** - not even against 모의투자. Unlike Upbit's real-connection test

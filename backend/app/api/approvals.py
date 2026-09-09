@@ -25,6 +25,7 @@ import json
 import httpx
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.approval.errors import (
@@ -36,13 +37,25 @@ from app.approval.errors import (
     PinIncorrectError,
     PinNotConfiguredError,
 )
+from app.approval.execution import (
+    ExecutionResult,
+    execute_approved_recommendation,
+    gather_kis_revalidation_input,
+)
 from app.approval.rate_limit import check_and_record_attempt
 from app.approval.service import ApprovalDecision, ApprovalService
 from app.core.config import get_settings
+from app.db.models import Approval
+from app.db.models import Recommendation as RecommendationRow
 from app.db.redis_client import get_redis
 from app.db.session import session_scope
 from app.integrations.kakao.auth import KakaoAuth
 from app.integrations.kakao.token_store import KakaoTokenStore
+from app.integrations.kis.auth import KisAuth
+from app.integrations.kis.execution import KisExecutionProvider
+from app.integrations.kis.orders import KisOrderClient
+from app.integrations.kis.rest_client import KisRestClient
+from app.models.domain import AssetType
 
 router = APIRouter(prefix="/api/approvals", tags=["approvals"])
 
@@ -84,6 +97,44 @@ class DecideRequest(BaseModel):
 
 class DecideResponse(BaseModel):
     approval_state: str
+    execution_outcome: str | None = None
+    """Set only for a STOCK recommendation's APPROVE/APPROVE_WITH_AMOUNT_CHANGE
+    decision - see `app/approval/execution.py`'s `ExecutionOutcome`. `None`
+    for REJECT/HOLD, and for CRYPTO recommendations (no execution bridge
+    wired up for Toss/Upbit yet - see that module's own docstring)."""
+    execution_reasons: list[str] = []
+
+
+async def _execute_stock_recommendation(
+    session: AsyncSession, approval: Approval, recommendation: RecommendationRow
+) -> ExecutionResult:
+    """Only called for a just-APPROVED STOCK recommendation. Builds a real
+    `KisRestClient`/`KisExecutionProvider` and runs the P29 bridge
+    (`app/approval/execution.py`). Safe to call even with KIS
+    unconfigured or `LIVE_TRADING`/`KIS_PAPER_TRADING` at their defaults -
+    those all fail closed (INVALIDATED from unhealthy market data, or
+    EXECUTION_FAILED from `LiveTradingDisabledError`), never place a real
+    order by accident.
+    """
+    settings = get_settings()
+    async with httpx.AsyncClient(base_url=settings.kis_rest_base_url, timeout=10.0) as client:
+        auth = KisAuth(client=client, settings=settings)
+        rest = KisRestClient(client, auth)
+        revalidation_data = await gather_kis_revalidation_input(session, rest, approval, recommendation)
+
+        order_client = KisOrderClient(
+            client, auth, settings.kis_cano, settings.kis_acnt_prdt_cd, paper_trading=settings.kis_paper_trading
+        )
+        provider = KisExecutionProvider(order_client, settings=settings)
+
+        return await execute_approved_recommendation(
+            session,
+            approval,
+            recommendation,
+            revalidation_data,
+            provider.place_order,
+            lambda quantity: {"quantity": str(quantity), "price": str(recommendation.entry_low)},
+        )
 
 
 async def _require_authenticated(session: AsyncSession, user_id: str) -> None:
@@ -171,4 +222,22 @@ async def decide_approval(
         except PinNotConfiguredError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-        return DecideResponse(approval_state=approval.state)
+        if approval.state != "APPROVED":
+            return DecideResponse(approval_state=approval.state)
+
+        recommendation_result = await session.execute(
+            select(RecommendationRow).where(RecommendationRow.id == approval.recommendation_id)
+        )
+        recommendation = recommendation_result.scalar_one_or_none()
+        if recommendation is None or recommendation.asset_type != AssetType.STOCK.value:
+            # CRYPTO: no execution bridge wired up yet (see app/approval/execution.py's
+            # module docstring) - the approval stays APPROVED, same as before this endpoint
+            # changed, so nothing about crypto's existing (lack of) behavior regresses.
+            return DecideResponse(approval_state=approval.state)
+
+        result = await _execute_stock_recommendation(session, approval, recommendation)
+        return DecideResponse(
+            approval_state=result.approval.state,
+            execution_outcome=result.outcome.value,
+            execution_reasons=result.reasons,
+        )

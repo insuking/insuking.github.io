@@ -210,6 +210,17 @@ class ApprovalService:
         await self._session.commit()
         return approval
 
+    async def mark_executed(self, approval: Approval) -> None:
+        """Transitions an `APPROVED` approval to `EXECUTED` once an order
+        has actually been placed - see `app/approval/execution.py`, the
+        module that calls this after a successful `ExecutionProvider.
+        place_order()`. Public (unlike `_transition`) because that module
+        lives outside this one and has no other way to record the
+        transition without reaching into a private method.
+        """
+        await self._transition(approval, "EXECUTED", actor="system")
+        await self._session.commit()
+
     async def apply_revalidation_result(
         self, approval: Approval, verdict: str, reasons: list[str] | None = None
     ) -> None:
