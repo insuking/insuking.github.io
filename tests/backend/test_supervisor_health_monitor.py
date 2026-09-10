@@ -6,6 +6,7 @@ pure `overall_state` severity roll-up.
 from datetime import UTC, datetime, timedelta
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete
 
 from app.db.models import SystemHealthRow
@@ -24,7 +25,7 @@ from app.supervisor.health_monitor import (
 pytestmark = pytest.mark.P19
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def _cleanup():  # type: ignore[no-untyped-def]
     yield
     async with session_scope() as session:

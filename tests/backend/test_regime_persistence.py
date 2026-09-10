@@ -6,6 +6,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete, select
 
 from app.db.models import OverheatScoreRow, RegimeRelativeStrengthRow
@@ -19,7 +20,7 @@ pytestmark = [pytest.mark.P34, pytest.mark.P35, pytest.mark.asyncio]
 _TEST_SYMBOL = "TEST-REGIME-PERSIST-A"
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def _cleanup():  # type: ignore[no-untyped-def]
     yield
     async with session_scope() as session:

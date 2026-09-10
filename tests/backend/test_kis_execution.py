@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete, select
 
 from app.core.config import Settings
@@ -46,7 +47,7 @@ def _provider_with(
     return KisExecutionProvider(order_client, settings=resolved_settings)
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def _cleanup():  # type: ignore[no-untyped-def]
     yield
     async with session_scope() as session:

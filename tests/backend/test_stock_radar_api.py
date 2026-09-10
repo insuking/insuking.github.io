@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete
 
 from app.db.models import RadarScoreRow, SecurityRow
@@ -26,7 +27,7 @@ async def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def _cleanup():  # type: ignore[no-untyped-def]
     yield
     async with session_scope() as session:

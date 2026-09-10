@@ -6,6 +6,7 @@ order rows and position state actually persist correctly.
 from datetime import UTC, datetime, timedelta
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete, select
 
 from app.db.models import Approval, Position, ProtectiveOrder, TradePlan
@@ -116,7 +117,7 @@ async def _make_position_and_plan(session, **position_overrides: object) -> tupl
     return position, plan
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def _cleanup():  # type: ignore[no-untyped-def]
     yield
     async with session_scope() as session:

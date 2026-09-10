@@ -10,7 +10,9 @@ import type { Position, Recommendation, RiskState, SystemHealth } from "./domain
 
 export interface DashboardSummary {
   market_regime: string | null;
+  market_regime_updated_at: string | null;
   btc_regime: string | null;
+  btc_regime_updated_at: string | null;
   overall_health: string;
   service_health: SystemHealth[];
   open_incidents: number;
@@ -18,6 +20,11 @@ export interface DashboardSummary {
   top_opportunities: Recommendation[];
   positions: Position[];
   risk_used: RiskState | null;
+  stock_decision_state: string | null;
+  stock_decision_reason: string | null;
+  stock_decision_top_symbol: string | null;
+  stock_decision_top_symbol_name: string | null;
+  stock_decision_observed_at: string | null;
 }
 
 export interface IncidentOut {
@@ -40,7 +47,14 @@ export interface PerformanceSummary {
   trade_count: number;
 }
 
+export interface RiskAvoidanceSummary {
+  too_late_excluded_count: number;
+  no_trade_day_count: number;
+  window_days: number;
+}
+
 export interface DashboardPerformance {
   real: PerformanceSummary;
   paper: PerformanceSummary;
+  risk_avoidance: RiskAvoidanceSummary;
 }

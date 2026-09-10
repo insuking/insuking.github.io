@@ -6,6 +6,7 @@ that `human_action_required` matches the failure's classification.
 from datetime import UTC, datetime
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete
 
 from app.db.models import Incident
@@ -23,7 +24,7 @@ pytestmark = [pytest.mark.P19, pytest.mark.asyncio]
 _SERVICE = "test-supervisor-incident-manager"
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def _cleanup():  # type: ignore[no-untyped-def]
     yield
     async with session_scope() as session:

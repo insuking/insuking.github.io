@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete, select
 
 from app.approval.pin import hash_pin
@@ -24,7 +25,7 @@ pytestmark = [pytest.mark.P21, pytest.mark.asyncio]
 _TEST_USER_ID = "test-user-rate-limit"
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def _cleanup():  # type: ignore[no-untyped-def]
     yield
     async with session_scope() as session:

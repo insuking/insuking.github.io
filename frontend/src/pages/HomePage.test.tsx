@@ -7,7 +7,9 @@ import { HomePage } from "./HomePage";
 function buildSummary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
   return {
     market_regime: null,
+    market_regime_updated_at: null,
     btc_regime: "RISK_ON",
+    btc_regime_updated_at: null,
     overall_health: "HEALTHY",
     service_health: [],
     open_incidents: 0,
@@ -15,6 +17,11 @@ function buildSummary(overrides: Partial<DashboardSummary> = {}): DashboardSumma
     top_opportunities: [],
     positions: [],
     risk_used: null,
+    stock_decision_state: null,
+    stock_decision_reason: null,
+    stock_decision_top_symbol: null,
+    stock_decision_top_symbol_name: null,
+    stock_decision_observed_at: null,
     ...overrides,
   };
 }

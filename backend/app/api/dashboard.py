@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -31,8 +31,15 @@ from app.approval.service import TERMINAL_STATES
 from app.core.config import get_settings
 from app.db.models import Approval as ApprovalRow
 from app.db.models import Candle as CandleRow
+from app.db.models import (
+    DailyDecisionRow,
+    Incident,
+    OverheatScoreRow,
+    PaperFill,
+    PaperOrder,
+    RiskStateRow,
+)
 from app.db.models import Fill as FillRow
-from app.db.models import Incident, PaperFill, PaperOrder, RiskStateRow
 from app.db.models import Order as OrderRow
 from app.db.models import Position as PositionRow
 from app.db.models import Recommendation as RecommendationRow
@@ -48,6 +55,7 @@ from app.models.domain import (
     SystemHealth,
 )
 from app.radar.regime import MarketRegime, classify_market_regime
+from app.stock_radar.decision_persistence import get_latest_daily_decision
 from app.supervisor import health_monitor, incident_manager
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -116,9 +124,19 @@ def _to_system_health(sh: health_monitor.ServiceHealth) -> SystemHealth:
     return SystemHealth(service=sh.service, state=sh.state, detected_at=datetime.now(UTC), message=sh.detail)
 
 
+@dataclass
+class RegimeReading:
+    regime: MarketRegime
+    updated_at: datetime
+    """The newest candle's `open_time` this reading was classified from -
+    P37 (`app.radar.candle_persistence`) now actually keeps this fresh via
+    the scheduler, so the 시장 tab can show "얼마나 최근 데이터인지" instead
+    of a bare label with no way to judge whether it's stale."""
+
+
 async def _latest_regime(
     session: AsyncSession, symbol: str, ma_window: int = _REGIME_MA_WINDOW
-) -> MarketRegime | None:
+) -> RegimeReading | None:
     """`None` when there isn't enough real candle history yet for this
     symbol to classify - never a guessed regime from partial data."""
     result = await session.execute(
@@ -145,12 +163,14 @@ async def _latest_regime(
         )
         for r in rows
     ]
-    return classify_market_regime(candles, ma_window=ma_window)
+    return RegimeReading(regime=classify_market_regime(candles, ma_window=ma_window), updated_at=rows[-1].open_time)
 
 
 class DashboardSummary(BaseModel):
     market_regime: str | None
+    market_regime_updated_at: datetime | None
     btc_regime: str | None
+    btc_regime_updated_at: datetime | None
     overall_health: HealthState
     service_health: list[SystemHealth]
     open_incidents: int
@@ -158,6 +178,11 @@ class DashboardSummary(BaseModel):
     top_opportunities: list[Recommendation]
     positions: list[Position]
     risk_used: RiskState | None
+    stock_decision_state: str | None
+    stock_decision_reason: str | None
+    stock_decision_top_symbol: str | None
+    stock_decision_top_symbol_name: str | None
+    stock_decision_observed_at: datetime | None
 
 
 @router.get("/summary", response_model=DashboardSummary)
@@ -204,9 +229,13 @@ async def get_summary() -> DashboardSummary:
         )
         btc_regime = await _latest_regime(session, _UPBIT_BTC_SYMBOL)
 
+        stock_decision = await get_latest_daily_decision(session)
+
     return DashboardSummary(
-        market_regime=market_regime.value if market_regime is not None else None,
-        btc_regime=btc_regime.value if btc_regime is not None else None,
+        market_regime=market_regime.regime.value if market_regime is not None else None,
+        market_regime_updated_at=market_regime.updated_at if market_regime is not None else None,
+        btc_regime=btc_regime.regime.value if btc_regime is not None else None,
+        btc_regime_updated_at=btc_regime.updated_at if btc_regime is not None else None,
         overall_health=overall,
         service_health=[_to_system_health(sh) for sh in service_healths],
         open_incidents=open_incidents,
@@ -214,6 +243,11 @@ async def get_summary() -> DashboardSummary:
         top_opportunities=top_opportunities,
         positions=positions,
         risk_used=risk_used,
+        stock_decision_state=stock_decision.decision_state if stock_decision is not None else None,
+        stock_decision_reason=stock_decision.reason if stock_decision is not None else None,
+        stock_decision_top_symbol=stock_decision.top_symbol if stock_decision is not None else None,
+        stock_decision_top_symbol_name=stock_decision.top_symbol_name if stock_decision is not None else None,
+        stock_decision_observed_at=stock_decision.observed_at if stock_decision is not None else None,
     )
 
 
@@ -273,6 +307,20 @@ class PerformanceSummary(BaseModel):
     trade_count: int
 
 
+class RiskAvoidanceSummary(BaseModel):
+    """P36/P37: this project has no stock backtest harness yet (see
+    docs/REGIME_ADAPTIVE_RADAR.md's "Known gaps"), so a real Bad-Trade/
+    Chase-Avoidance-Rate KPI (needing tracked historical outcomes) isn't
+    computable today - these are the honest, real counts this deployment
+    actually has: how many candidates P35's TOO_LATE gate kept out of a
+    recommendation, and how many days P36 correctly called "nothing worth
+    buying" instead of forcing a pick, over the last 7 days."""
+
+    too_late_excluded_count: int
+    no_trade_day_count: int
+    window_days: int
+
+
 class DashboardPerformance(BaseModel):
     """`real` and `paper` are kept separate, never blended into one number -
     conflating simulated and real PnL on a trading dashboard is exactly the
@@ -281,6 +329,7 @@ class DashboardPerformance(BaseModel):
 
     real: PerformanceSummary
     paper: PerformanceSummary
+    risk_avoidance: RiskAvoidanceSummary
 
 
 def _accumulate_realized_pnl(fills_by_symbol: dict[str, list[tuple[str, float, float]]]) -> _PerformanceTotals:
@@ -310,12 +359,31 @@ def _accumulate_realized_pnl(fills_by_symbol: dict[str, list[tuple[str, float, f
     return totals
 
 
+_RISK_AVOIDANCE_WINDOW_DAYS = 7
+
+
 @router.get("/performance", response_model=DashboardPerformance)
 async def get_performance() -> DashboardPerformance:
     real_by_symbol: dict[str, list[tuple[str, float, float]]] = {}
     paper_by_symbol: dict[str, list[tuple[str, float, float]]] = {}
 
     async with session_scope() as session:
+        window_start = datetime.now(UTC) - timedelta(days=_RISK_AVOIDANCE_WINDOW_DAYS)
+
+        too_late_result = await session.execute(
+            select(func.count())
+            .select_from(OverheatScoreRow)
+            .where(OverheatScoreRow.status == "TOO_LATE", OverheatScoreRow.observed_at >= window_start)
+        )
+        too_late_excluded_count = too_late_result.scalar_one()
+
+        no_trade_result = await session.execute(
+            select(func.count())
+            .select_from(DailyDecisionRow)
+            .where(DailyDecisionRow.decision_state == "NO_TRADE_DAY", DailyDecisionRow.observed_at >= window_start)
+        )
+        no_trade_day_count = no_trade_result.scalar_one()
+
         real_result = await session.execute(
             select(OrderRow.symbol, OrderRow.side, FillRow.quantity, FillRow.price, FillRow.filled_at)
             .join(FillRow, FillRow.order_id == OrderRow.id)
@@ -347,5 +415,10 @@ async def get_performance() -> DashboardPerformance:
             win_count=paper_totals.win_count,
             loss_count=paper_totals.loss_count,
             trade_count=paper_totals.trade_count,
+        ),
+        risk_avoidance=RiskAvoidanceSummary(
+            too_late_excluded_count=too_late_excluded_count,
+            no_trade_day_count=no_trade_day_count,
+            window_days=_RISK_AVOIDANCE_WINDOW_DAYS,
         ),
     )

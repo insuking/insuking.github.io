@@ -5,6 +5,7 @@ clamping.
 """
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete, select
 
 from app.db.models import PaperAccount, PaperFill, PaperOrder, PaperPosition
@@ -28,7 +29,7 @@ async def _get_position(session, symbol: str) -> PaperPosition:  # type: ignore[
     return result.scalar_one()
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def _cleanup():  # type: ignore[no-untyped-def]
     yield
     async with session_scope() as session:

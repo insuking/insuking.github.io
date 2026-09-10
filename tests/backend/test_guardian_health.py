@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete, select
 
 from app.db.models import SystemHealthRow
@@ -32,7 +33,7 @@ def test_is_stale_false_within_max_age() -> None:
     assert is_stale(last, now, max_age_seconds=60) is False
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def _cleanup():  # type: ignore[no-untyped-def]
     yield
     async with session_scope() as session:

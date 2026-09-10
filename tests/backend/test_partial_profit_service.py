@@ -6,6 +6,7 @@ the fill-derived state, not just the pure accounting math.
 from datetime import UTC, datetime, timedelta
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete, select
 
 from app.db.models import Approval, Position, TradePlan
@@ -94,7 +95,7 @@ async def _make_position_and_plan(session) -> tuple[Position, TradePlan]:  # typ
     return position, plan
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def _cleanup():  # type: ignore[no-untyped-def]
     yield
     async with session_scope() as session:

@@ -76,6 +76,21 @@ export function PerformancePage() {
         <>
           <PerformanceCard title="실전 거래" summary={performance.real} />
           <PerformanceCard title="페이퍼 거래" summary={performance.paper} />
+          <section className="card">
+            <p className="card-title">위험 회피 실적 (최근 {performance.risk_avoidance.window_days}일)</p>
+            <div className="card-row">
+              <span>과열 진입 차단 (TOO LATE)</span>
+              <span>{performance.risk_avoidance.too_late_excluded_count}건</span>
+            </div>
+            <div className="card-row">
+              <span>무리한 매수 대신 관망한 날</span>
+              <span>{performance.risk_avoidance.no_trade_day_count}일</span>
+            </div>
+            <p className="muted small">
+              승률/손익과 별개로, 시스템이 실제로 위험한 진입을 걸러낸 횟수입니다. 정식 백테스트 기반 회피율
+              KPI는 아직 준비 중입니다.
+            </p>
+          </section>
         </>
       )}
     </main>

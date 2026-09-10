@@ -55,6 +55,13 @@ yesterday's foreign+institution net flow via one extra
 P25 endpoint `scan_stocks.py` already uses, not a new integration risk).
 Only run for CONFIRMED symbols, not every scored candidate, to keep this
 script's request volume roughly what it already was.
+
+**P36**: also computes `app/stock_radar/decision.py`'s per-symbol
+STRONG_BUY/BUY/WATCH/NO_BUY call (using `score.positive`'s length as an
+honest proxy for "how many entry filters passed" - see `_entry_filters()`
+below for why) for every CONFIRMED symbol, picks whichever ranks best,
+and persists the resulting day-level call (including the honest
+NO_TRADE_DAY outcome) to `daily_decisions` - "오늘의 판정" on the 시장 tab.
 """
 
 from __future__ import annotations
@@ -79,13 +86,20 @@ from app.integrations.kis.errors import KisApiError
 from app.integrations.kis.rest_client import KOSPI_INDEX_CODE, KisRestClient
 from app.models.domain import Recommendation
 from app.radar.regime import MarketRegime, classify_market_regime
+from app.stock_radar.decision import (
+    DecisionState,
+    EntryDecision,
+    decide_daily_state,
+    decide_entry_state,
+)
+from app.stock_radar.decision_persistence import persist_daily_decision
 from app.stock_radar.entry_confirmation import EntryVerdict
 from app.stock_radar.overheat import HeatScore, HeatStatus
 from app.stock_radar.persistence import get_latest_scan, get_security_names
 from app.stock_radar.regime_interaction import compute_interaction_score
 from app.stock_radar.regime_persistence import persist_interaction_score, upsert_heat_score
 from app.stock_radar.scan import build_confirmed_recommendations, reconfirm_candidates
-from app.stock_radar.scoring import PreBreakoutScore, ScoreFactor
+from app.stock_radar.scoring import SCORE_MAX_AVAILABLE, PreBreakoutScore, ScoreFactor
 
 _REGIME_HISTORY_DAYS = 30  # only need enough for a 20-day moving-average regime read
 _ATR_HISTORY_DAYS = 45  # comfortably covers ATR(14) plus a few extra trading days
@@ -205,6 +219,90 @@ async def _persist_interaction_scores(
         await session.commit()
 
 
+_STATE_RANK = {
+    DecisionState.STRONG_BUY: 3,
+    DecisionState.BUY: 2,
+    DecisionState.WATCH: 1,
+    DecisionState.NO_BUY: 0,
+}
+
+
+def _entry_filters(score: PreBreakoutScore) -> tuple[int, int]:
+    """(filters_passed, filters_total) - a real, honest proxy for the
+    spec's "5개 진입필터" this project has no literal VWAP/Opening-Support/
+    RVOL/Flow/RS filter bank for (those are the *crypto* radar's P4
+    concepts - see `app/radar/ranking.py` - the stock radar's own signal
+    set is `scoring.py`'s compression/volume/value/distance/ATR/OBV/
+    market-RS[/institutional-flow] factors instead). `filters_passed` is
+    how many of those actually cleared the strong-signal bar
+    (`score.positive`'s length - the same >=0.7-fraction threshold
+    `scoring.py` already uses to decide what counts as a real positive,
+    not a new number invented here); `filters_total` is how many factors
+    were even evaluated for this symbol (7, or 8 when P25's investor-flow
+    factor was also scored - see `PreBreakoutWeights.institutional_flow`'s
+    docstring for why that's conditional).
+    """
+    filters_total = 8 if score.max_available > SCORE_MAX_AVAILABLE else 7
+    return len(score.positive), filters_total
+
+
+async def _persist_daily_decision(
+    scores_by_symbol: dict[str, PreBreakoutScore],
+    confirmed_symbols: list[str],
+    heat_scores: dict[str, HeatScore],
+    names: dict[str, str],
+    regime: MarketRegime,
+    observed_at: datetime,
+) -> None:
+    """P36: `decide_entry_state()` for every CONFIRMED symbol that got a
+    heat reading, then `decide_daily_state()` from whichever one ranks
+    best (STRONG_BUY > BUY > WATCH > NO_BUY, tie-broken by score) - "오늘의
+    판정" persisted once per run so the 시장 tab has a real answer to
+    "is there anything worth buying today", including the honest
+    NO_TRADE_DAY case.
+    """
+    best_symbol: str | None = None
+    best_decision: EntryDecision | None = None
+    best_filters: tuple[int, int] | None = None
+
+    for symbol in confirmed_symbols:
+        score = scores_by_symbol.get(symbol)
+        heat = heat_scores.get(symbol)
+        if score is None or heat is None:
+            continue
+        normalized_score = (score.total_score / score.max_available * 100) if score.max_available > 0 else 0.0
+        filters_passed, filters_total = _entry_filters(score)
+        decision = decide_entry_state(
+            normalized_score=min(max(normalized_score, 0.0), 100.0),
+            regime=regime,
+            heat_status=heat.status,
+            entry_filters_passed=filters_passed,
+            entry_filters_total=filters_total,
+        )
+        if best_decision is None or (
+            _STATE_RANK[decision.state],
+            decision.normalized_score,
+        ) > (_STATE_RANK[best_decision.state], best_decision.normalized_score):
+            best_symbol, best_decision, best_filters = symbol, decision, (filters_passed, filters_total)
+
+    daily_state = decide_daily_state(best_decision)
+    async with session_scope() as session:
+        await persist_daily_decision(
+            session,
+            market_regime=regime.value,
+            daily_state=daily_state,
+            top_symbol=best_symbol,
+            top_symbol_name=names.get(best_symbol) if best_symbol else None,
+            top_decision=best_decision,
+            entry_filters_passed=best_filters[0] if best_filters else None,
+            entry_filters_total=best_filters[1] if best_filters else None,
+            observed_at=observed_at,
+        )
+        await session.commit()
+
+    print(f"\n오늘의 판정 (P36): {daily_state.value}" + (f" ({best_symbol})" if best_symbol else ""))
+
+
 async def run() -> None:
     settings = get_settings()
     if not settings.kis_configured:
@@ -285,6 +383,8 @@ async def run() -> None:
 
     await _persist_heat_scores(heat_scores, observed_at)
     await _persist_recommendations(recommendations)
+    scores_by_symbol = {s.symbol: s for s in scores}
+    await _persist_daily_decision(scores_by_symbol, confirmed_symbols, heat_scores, names, regime, observed_at)
 
     if recommendations:
         print(f"\nPersisted {len(recommendations)} recommendation(s) - now visible on the 추천 tab:")

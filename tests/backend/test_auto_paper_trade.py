@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete, select
 
 from app.db.models import PaperAccount, PaperFill, PaperOrder, PaperPosition
@@ -108,7 +109,7 @@ async def _get_position(session, symbol: str) -> PaperPosition | None:  # type: 
     return result.scalar_one_or_none()
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def _cleanup():  # type: ignore[no-untyped-def]
     yield
     async with session_scope() as session:

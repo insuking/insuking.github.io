@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete
 
 from app.core.config import Settings
@@ -47,7 +48,7 @@ def _tokens(**overrides: object) -> KakaoTokens:
     return KakaoTokens(**defaults)  # type: ignore[arg-type]
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def _cleanup() -> AsyncGenerator[None]:
     yield
     async with session_scope() as session:

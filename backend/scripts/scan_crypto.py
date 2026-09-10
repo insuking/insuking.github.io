@@ -19,6 +19,17 @@ Every persisted row's id is prefixed `scan-crypto-`, and a run first deletes
 all previous `scan-crypto-%` rows, so this is safe to re-run repeatedly
 (same idempotent-replace pattern as seed_demo_data.py) and never accumulates
 stale recommendations from an earlier scan.
+
+**P37**: also fetches and persists ~25 real daily BTC candles
+(`UpbitRestClient.get_daily_candles()`) to the generic `candles` table via
+`app.radar.candle_persistence.persist_candles()` - a real, continuously
+refreshed feed for the 시장 tab's BTC regime read, replacing what used to
+only work because `seed_demo_data.py`'s demo candles happened to still be
+within the 20-day moving-average window. Deliberately separate from the
+1-minute candles `scan_crypto_market()` fetches internally for its own
+RVOL/breakout math - a 20-period moving average over 1-minute bars would
+read a ~20-minute blip, not the daily-trend "is BTC safe right now" this
+tab is actually answering.
 """
 
 from __future__ import annotations
@@ -36,10 +47,13 @@ from sqlalchemy import delete
 from app.core.config import get_settings
 from app.db.models import Recommendation as RecommendationRow
 from app.db.session import session_scope
+from app.integrations.upbit.errors import UpbitApiError
 from app.integrations.upbit.rest_client import UpbitRestClient
-from app.scan.crypto_scan import scan_crypto_market
+from app.radar.candle_persistence import persist_candles
+from app.scan.crypto_scan import BENCHMARK_MARKET, scan_crypto_market
 
 _DEFAULT_BUYING_POWER = 10_000_000.0  # KRW placeholder - see module docstring
+_REGIME_CANDLE_COUNT = 25  # comfortably covers app.radar.regime's 20-day moving average
 
 
 async def _clear_previous() -> None:
@@ -66,6 +80,17 @@ async def run() -> None:
     async with httpx.AsyncClient(base_url=settings.upbit_rest_base_url) as client:
         rest = UpbitRestClient(client)
         recommendations = await scan_crypto_market(rest, account_buying_power=account_buying_power)
+
+        try:
+            regime_candles = await rest.get_daily_candles(BENCHMARK_MARKET, count=_REGIME_CANDLE_COUNT)
+        except (UpbitApiError, httpx.HTTPError, KeyError, ValueError) as exc:
+            print(f"WARNING: could not fetch real BTC daily candles for the 시장 tab's regime read ({exc!r}).")
+            regime_candles = []
+
+    if regime_candles:
+        async with session_scope() as session:
+            await persist_candles(session, regime_candles)
+            await session.commit()
 
     async with session_scope() as session:
         for i, rec in enumerate(recommendations):

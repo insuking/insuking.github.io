@@ -7,6 +7,7 @@ docs/MASTER_SPEC.md's never-auto-resolved list.
 from datetime import UTC, datetime
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete
 
 from app.db.models import Incident, Position
@@ -36,7 +37,7 @@ def _position(symbol: str, quantity: float) -> Position:
     )
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def _cleanup():  # type: ignore[no-untyped-def]
     yield
     async with session_scope() as session:

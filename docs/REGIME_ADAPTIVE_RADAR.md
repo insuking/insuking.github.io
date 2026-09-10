@@ -1,11 +1,13 @@
-# Regime-Adaptive Radar (P34-P36)
+# Regime-Adaptive Radar (P34-P37)
 
 This extends the stock radar from "rank candidates by a single score" to
 three additional, independent signals layered on top: how a symbol's
 strength interacts with the market's own direction (P34), whether it's
 already moved too far to chase (P35), and a final BUY/WATCH/NO_BUY/
 NO_TRADE_DAY call that treats "nothing worth buying today" as a normal,
-successful outcome rather than an absence to work around (P36).
+successful outcome rather than an absence to work around (P36) - plus the
+real benchmark-candle persistence (P37) that closes the gap that was
+causing the 시장 tab's "데이터 없음" for the domestic market.
 
 ## P34 - Market Regime x Relative Strength Interaction Engine
 
@@ -58,25 +60,66 @@ to `overheat_scores` so a later review can see what got filtered.
   best symbol's own decision: NO_TRADE_DAY exactly when nothing scanned
   today reached at least BUY.
 
-These two functions exist and are fully tested but are **not yet wired
-into `reconfirm_entries.py`'s persisted output** - see Known gaps below.
+**Now wired**: `scripts/reconfirm_entries.py` calls
+`decide_entry_state()` for every CONFIRMED symbol reconfirmed in a run,
+picks the best one, calls `decide_daily_state()`, and persists the result
+via `app/stock_radar/decision_persistence.py` to a new `daily_decisions`
+table - `app/api/dashboard.py`'s `/summary` endpoint surfaces it as
+`stock_decision_state`/`stock_decision_reason`/`stock_decision_top_symbol`
+/`stock_decision_top_symbol_name`, and the 시장 tab's "오늘의 판정" card
+reads it directly.
+
+`decide_entry_state()` needs an entry-filter count; this project never
+built the spec's literal 5-filter bank (VWAP/opening-support/RVOL/flow/RS
+- those are crypto-radar P4 concepts, not something the stock radar has).
+`scripts/reconfirm_entries.py`'s `_entry_filters()` uses an honest proxy
+instead: `len(score.positive)` (the PRE-BREAKOUT factors that already
+cleared the scoring engine's own "strong signal" bar) out of 7, or 8 when
+P25's institutional-flow factor was also scored - real, already-computed
+data, not a new fabricated filter bank.
+
+## P37 - Real Benchmark Candle Persistence
+
+Root cause of the 시장 tab showing "데이터 없음" for the domestic market:
+nothing in production ever wrote to the generic `candles` table
+`app/api/dashboard.py`'s regime read depends on - the KOSPI benchmark
+candles `scripts/scan_stocks.py` fetches for its own RS calculation were
+used in-memory and discarded, and BTC only ever "worked" because
+`seed_demo_data.py`'s demo seed data happened to include `KRW-BTC` bars.
+
+`app/radar/candle_persistence.py`'s `persist_candles()` (delete-then-
+insert by symbol/interval/date-range, idempotent on rerun) is now called
+from both `scan_stocks.py` (real KOSPI daily candles, symbol `"0001"` -
+`KisRestClient.KOSPI_INDEX_CODE`, now `config.py`'s `market_index_symbol`
+default) and `scan_crypto.py` (real BTC daily candles via Upbit, kept
+separate from the 1-minute candles RVOL/breakout math uses). Both only
+persist on a successful real fetch - the flat placeholder fallback used
+when a fetch fails is never written, so a real "no data yet" state stays
+distinguishable from real data.
 
 ## Known gaps - explicitly out of scope this pass, not silently skipped
 
-The original request asked for several pieces this project has no real
-data source for, or that need infrastructure well beyond what a single
-pass can honestly build and test. Listed here rather than faked:
+Some pieces the original request asked for still have no real data
+source, or need infrastructure well beyond what a single pass can
+honestly build and test. Listed here rather than faked:
 
 - **Leader-Laggard Engine** (분석 선두주 대비 후발 공급망 종목 찾기): needs
   a supply-chain/sector-peer mapping data source (same customer, same
   process, same supply chain) this project has never had access to.
-  Fabricating peer relationships would be worse than not having the
-  feature.
+  Checked directly (`grep sector_code app/integrations/kis/krx_master.py`
+  returns nothing) - `SecurityRow.sector_code`/`sector_name` are declared
+  in the schema but never populated by the KRX master parser. Fabricating
+  peer relationships would be worse than not having the feature.
 - **RS_5m/RS_15m/RS_30m/RS_60m intraday persistence**: the stock radar
   (P23 onward) is built entirely on *daily* candles - there is no
   intraday tick/minute-bar store for stocks the way the crypto radar has
-  for Upbit. Building one is a real, separate phase, not a field to add
-  here.
+  for Upbit. Partial, real substitute already in place: P34/P35's
+  `regime_relative_strength`/`overheat_scores` tables are append-only and
+  get a new row every `reconfirm_entries.py` run - i.e. every ~30 minutes
+  during KRX hours under the P32 scheduler - so multiple real intraday
+  snapshots per symbol per day already exist and are queryable by
+  `observed_at`. Coarser than tick-level RS, but real data, not a guess.
+  A dedicated read helper/API for it is still a follow-up, not yet built.
 - **08:20 daily macro-regime check** (미국장/SOX/VIX/유가/환율): no
   integration exists for any of those data sources. `reconfirm_entries.py`
   already documents that its own output only means anything during real
@@ -90,12 +133,11 @@ pass can honestly build and test. Listed here rather than faked:
 - **Bad Trade Avoidance Rate / Chase Avoidance Rate / No-Trade Accuracy
   KPIs**: these require actual historical trade outcomes tracked over
   time. The crypto radar has a backtest harness (P10); the stock radar
-  does not. `decide_entry_state()`'s persisted reasoning (once wired -
-  see below) is the raw material a future backtest phase would need, but
-  computing the KPIs themselves needs that harness built first.
-- **P36's decision engine is not yet wired into `reconfirm_entries.py`'s
-  persisted output** - `decide_entry_state()`/`decide_daily_state()` are
-  built, tested, and ready, but connecting them to a persisted per-run
-  "today's call" (and a dashboard card showing it) is the natural next
-  step, deliberately left for a follow-up pass rather than rushed in
-  alongside the P34/P35 wiring in this one.
+  does not. Partial, real substitute already in place: `/api/dashboard/
+  performance`'s `risk_avoidance` field reports real counts over the last
+  7 days - how many candidates P35's TOO_LATE gate actually excluded, and
+  how many days P36 actually called NO_TRADE_DAY instead of forcing a
+  pick - shown on the 성과 tab. This is not the requested KPI (no
+  win/loss outcome tracking behind it yet), and is labeled as such in
+  both the API docstring and the UI copy; the real KPI still needs a
+  stock backtest harness built first.

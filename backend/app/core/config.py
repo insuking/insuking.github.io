@@ -138,14 +138,15 @@ class Settings(BaseSettings):
 
     # Home-screen market regime (P21, app/api/dashboard.py) - the `Candle`
     # symbol this deployment treats as the KOSPI/KOSDAQ benchmark index for
-    # `app.radar.regime.classify_market_regime`. Unset by default: there is
-    # no established convention yet for which real KIS index code a live
-    # feed writer should tag index candles under, so this stays an honest
-    # "not configured" (market_regime reports null) rather than guessing
-    # one. The crypto side needs no equivalent setting - Upbit's own
-    # `KRW-BTC` market symbol (see app/integrations/upbit/rest_client.py)
-    # is unambiguous.
-    market_index_symbol: str | None = None
+    # `app.radar.regime.classify_market_regime`. Defaults to "0001" -
+    # `KisRestClient.KOSPI_INDEX_CODE` (app/integrations/kis/rest_client.py,
+    # not imported here to avoid a config<->integrations import cycle) -
+    # the exact symbol `scripts/scan_stocks.py` persists real KOSPI
+    # candles under via `app.radar.candle_persistence.persist_candles()`
+    # (P37), so this now has a real, established convention to point at
+    # instead of staying unset. The crypto side needs no equivalent
+    # setting - Upbit's own `KRW-BTC` market symbol is unambiguous.
+    market_index_symbol: str | None = "0001"
 
 
 @lru_cache

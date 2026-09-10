@@ -97,6 +97,11 @@
   font-size: 0.88rem;
 }
 
+.muted.small {
+  font-size: 0.78rem;
+  margin-top: 2px;
+}
+
 .cta {
   width: 100%;
   min-height: 52px;

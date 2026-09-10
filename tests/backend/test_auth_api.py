@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete, select
 
 from app.core.config import get_settings
@@ -27,7 +28,7 @@ pytestmark = [pytest.mark.P21, pytest.mark.asyncio]
 _TEST_KAKAO_USER_ID = "kakao-uid-test-auth-api"
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def _configure_kakao():  # type: ignore[no-untyped-def]
     settings = get_settings()
     original_id, original_uri = settings.kakao_client_id, settings.kakao_redirect_uri
@@ -37,7 +38,7 @@ async def _configure_kakao():  # type: ignore[no-untyped-def]
     settings.kakao_client_id, settings.kakao_redirect_uri = original_id, original_uri
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def _cleanup():  # type: ignore[no-untyped-def]
     yield
     async with session_scope() as session:

@@ -553,3 +553,32 @@ class OverheatScoreRow(Base):
     heat_score: Mapped[float] = mapped_column(Float)
     status: Mapped[str] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class DailyDecisionRow(Base):
+    """P36: one `scripts/reconfirm_entries.py` run's overall stock-radar
+    call (`app/stock_radar/decision.py`'s `decide_daily_state()`), keyed
+    by generated `id` + indexed `observed_at` - append-only, same shape as
+    `RadarScoreRow`/`RegimeRelativeStrengthRow`, so the 시장 tab can show
+    "오늘의 판정" from the latest row and a later review can see how it
+    changed across the day's several reconfirm runs (the scheduler, P32,
+    runs this every `SCHEDULER_STOCK_INTERVAL_SECONDS` during KRX hours -
+    not just once), not only today's final call. `top_symbol`/
+    `top_symbol_name`/`top_normalized_score` are nullable: a
+    `NO_TRADE_DAY` with nothing scanned at all still gets a row, just
+    without a "this one almost made it" candidate to point at."""
+
+    __tablename__ = "daily_decisions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    market_regime: Mapped[str] = mapped_column(String)
+    minimum_score: Mapped[float] = mapped_column(Float)
+    decision_state: Mapped[str] = mapped_column(String)
+    top_symbol: Mapped[str | None] = mapped_column(String, nullable=True)
+    top_symbol_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    top_normalized_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entry_filters_passed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    entry_filters_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

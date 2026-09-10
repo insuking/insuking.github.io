@@ -8,15 +8,18 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete
 
 from app.db.models import (
     Approval,
     Candle,
+    DailyDecisionRow,
     Fill,
     Incident,
     KakaoAccount,
     Order,
+    OverheatScoreRow,
     PaperAccount,
     PaperFill,
     PaperOrder,
@@ -31,6 +34,10 @@ from app.guardian.health import SERVICE_NAME as GUARDIAN_SERVICE
 from app.guardian.health import record_heartbeat
 from app.main import app
 from app.models.domain import HealthState
+from app.stock_radar.decision import DecisionState, EntryDecision
+from app.stock_radar.decision_persistence import persist_daily_decision
+from app.stock_radar.overheat import HeatScore, HeatStatus
+from app.stock_radar.regime_persistence import upsert_heat_score
 
 pytestmark = [pytest.mark.P21, pytest.mark.asyncio]
 
@@ -38,7 +45,7 @@ _SYMBOL = "DASH-TEST-SYM"
 _PAPER_ACCOUNT_ID = "test-dashboard-paper-account"
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def _cleanup():  # type: ignore[no-untyped-def]
     yield
     async with session_scope() as session:
@@ -49,7 +56,9 @@ async def _cleanup():  # type: ignore[no-untyped-def]
         await session.execute(delete(Approval).where(Approval.user_id == "test-dashboard-user"))
         await session.execute(delete(KakaoAccount).where(KakaoAccount.user_id == "test-dashboard-user"))
         await session.execute(delete(Incident).where(Incident.service == "test-dashboard-service"))
-        await session.execute(delete(Candle).where(Candle.symbol.in_([_SYMBOL, "KRW-BTC"])))
+        await session.execute(delete(Candle).where(Candle.symbol.in_([_SYMBOL, "KRW-BTC", "0001"])))
+        await session.execute(delete(OverheatScoreRow).where(OverheatScoreRow.symbol == _SYMBOL))
+        await session.execute(delete(DailyDecisionRow).where(DailyDecisionRow.market_regime == "TEST-DASH-REGIME"))
 
         await session.execute(delete(Fill).where(Fill.order_id.like("dash-order-%")))
         await session.execute(delete(Order).where(Order.id.like("dash-order-%")))
@@ -72,7 +81,7 @@ async def test_summary_reports_offline_guardian_and_empty_lists_on_a_clean_slate
     body = response.json()
     guardian = next(sh for sh in body["service_health"] if sh["service"] == GUARDIAN_SERVICE)
     assert guardian["state"] == "OFFLINE"
-    assert body["market_regime"] is None  # no market_index_symbol configured
+    assert body["market_regime"] is None  # no KOSPI candles persisted yet on a clean slate
 
 
 async def test_summary_reflects_healthy_guardian_heartbeat() -> None:
@@ -254,6 +263,59 @@ async def test_summary_btc_regime_computed_from_real_candles() -> None:
     assert response.json()["btc_regime"] == "RISK_ON"
 
 
+@pytest.mark.P37
+async def test_summary_market_regime_computed_from_real_kospi_candles() -> None:
+    now = datetime.now(UTC)
+    async with session_scope() as session:
+        for i in range(21):
+            session.add(
+                Candle(
+                    id=f"dash-kospi-candle-{i}",
+                    symbol="0001",
+                    interval="1d",
+                    open=2500.0 + i,
+                    high=2510.0 + i,
+                    low=2490.0 + i,
+                    close=2505.0 + i,
+                    volume=1000.0,
+                    open_time=now - timedelta(days=21 - i),
+                    close_time=now - timedelta(days=20 - i),
+                )
+            )
+        await session.commit()
+
+    async with await _client() as client:
+        response = await client.get("/api/dashboard/summary")
+    body = response.json()
+    # A steadily rising close series above its own moving average -> RISK_ON.
+    assert body["market_regime"] == "RISK_ON"
+    # P37: the reading is timestamped from the newest candle, not just labeled.
+    assert body["market_regime_updated_at"] is not None
+
+
+@pytest.mark.P36
+async def test_summary_carries_the_latest_daily_stock_decision() -> None:
+    observed_at = datetime.now(UTC)
+    async with session_scope() as session:
+        await persist_daily_decision(
+            session,
+            market_regime="TEST-DASH-REGIME",
+            daily_state=DecisionState.STRONG_BUY,
+            top_symbol="005930",
+            top_symbol_name="삼성전자",
+            top_decision=EntryDecision(DecisionState.STRONG_BUY, 80.0, 89.0, "5/5 filters"),
+            observed_at=observed_at,
+        )
+        await session.commit()
+
+    async with await _client() as client:
+        response = await client.get("/api/dashboard/summary")
+    body = response.json()
+    assert body["stock_decision_state"] == "STRONG_BUY"
+    assert body["stock_decision_top_symbol"] == "005930"
+    assert body["stock_decision_top_symbol_name"] == "삼성전자"
+
+
 async def test_incidents_endpoint_returns_seeded_incident() -> None:
     now = datetime.now(UTC)
     async with session_scope() as session:
@@ -390,3 +452,25 @@ async def test_performance_keeps_real_and_paper_pnl_separate() -> None:
     assert body["real"]["win_count"] >= 1
     assert body["paper"]["realized_pnl"] <= -50.0  # (40-50)*5, plus whatever pre-existed
     assert body["paper"]["loss_count"] >= 1
+
+
+@pytest.mark.P36
+@pytest.mark.P35
+async def test_performance_reports_risk_avoidance_counts_from_the_last_7_days() -> None:
+    now = datetime.now(UTC)
+    too_late_heat = HeatScore(9.0, 9.0, 9.0, None, None, 1.0, None, 112.5, HeatStatus.TOO_LATE)
+
+    async with session_scope() as session:
+        await upsert_heat_score(session, symbol=_SYMBOL, score=too_late_heat, observed_at=now)
+        await persist_daily_decision(
+            session, market_regime="TEST-DASH-REGIME", daily_state=DecisionState.NO_TRADE_DAY,
+            top_symbol=None, top_symbol_name=None, top_decision=None, observed_at=now,
+        )
+        await session.commit()
+
+    async with await _client() as client:
+        response = await client.get("/api/dashboard/performance")
+    avoidance = response.json()["risk_avoidance"]
+    assert avoidance["too_late_excluded_count"] >= 1
+    assert avoidance["no_trade_day_count"] >= 1
+    assert avoidance["window_days"] == 7

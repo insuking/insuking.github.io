@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete, select
 
 from app.core.config import Settings
@@ -41,7 +42,7 @@ def _provider_with(handler, settings: Settings | None = None) -> UpbitExecutionP
     return UpbitExecutionProvider(order_client, settings=settings or _settings())
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def _cleanup():  # type: ignore[no-untyped-def]
     yield
     async with session_scope() as session:

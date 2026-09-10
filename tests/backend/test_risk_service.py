@@ -6,6 +6,7 @@ that should_block_new_trades reads back what was last recorded.
 from datetime import UTC, datetime, timedelta
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete
 
 from app.db.models import RiskStateRow
@@ -32,7 +33,7 @@ def _risk_state(as_of: datetime, **overrides: object) -> RiskState:
     return RiskState(**defaults)  # type: ignore[arg-type]
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def _cleanup():  # type: ignore[no-untyped-def]
     cutoff = datetime.now(UTC)
     yield

@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete, select
 
 from app.db.models import Incident, PaperAccount, PaperFill, PaperOrder, PaperPosition
@@ -61,7 +62,7 @@ def test_release_readiness_names_the_blocked_external_integrations() -> None:
         assert name in text, f"{name} should be named among the BLOCKED real-connection gaps"
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def _cleanup():  # type: ignore[no-untyped-def]
     yield
     async with session_scope() as session:

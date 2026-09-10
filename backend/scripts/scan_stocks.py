@@ -71,6 +71,7 @@ from app.integrations.kis.krx_master import (
 )
 from app.integrations.kis.rest_client import KOSPI_INDEX_CODE, KisRestClient
 from app.models.domain import Candle, Market
+from app.radar.candle_persistence import persist_candles
 from app.radar.regime import MarketRegime, classify_market_regime
 from app.stock_radar.persistence import persist_scan_results
 from app.stock_radar.scan import scan_stock_universe
@@ -156,6 +157,7 @@ async def run() -> None:
         auth = KisAuth(client=client, settings=settings)
         rest = KisRestClient(client, auth)
 
+        benchmark_is_real = True
         try:
             benchmark_candles = await rest.get_index_daily_prices(KOSPI_INDEX_CODE, start_date, end_date)
             if not benchmark_candles:
@@ -168,6 +170,15 @@ async def run() -> None:
                 "See KisRestClient.get_index_daily_prices()'s docstring.\n"
             )
             benchmark_candles = _flat_benchmark(_HISTORY_DAYS)
+            benchmark_is_real = False
+
+        # P37: only ever persist the real fetch - the flat placeholder above
+        # exists so scoring can still run, never to be mistaken for a real
+        # market read by the 시장 tab's regime display.
+        if benchmark_is_real:
+            async with session_scope() as session:
+                await persist_candles(session, benchmark_candles)
+                await session.commit()
 
         regime = classify_market_regime(benchmark_candles)
         regime_label = {
