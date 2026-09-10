@@ -101,10 +101,10 @@ async def scan_stock_universe(
     stays caller-supplied rather than this function pulling the KRX
     universe itself - `app/integrations/kis/krx_master.py` (P30) is the
     real master-file downloader/parser, wired in at `scripts/
-    scan_stocks.py`'s `STOCK_SCAN_UNIVERSE=FULL` layer (which then narrows
-    the full universe to a liquidity-ranked top-N before calling this
-    function), not here - this function has no opinion on where its
-    symbol list came from.
+    scan_stocks.py`'s default universe path (P39, which rotates through
+    the full liquidity-ranked KOSPI+KOSDAQ universe a chunk at a time
+    before calling this function), not here - this function has no
+    opinion on where its symbol list came from.
 
     Also returns a `symbol -> Korean name` dict (from the same daily-price
     call, via `KisRestClient.get_daily_prices_with_name()` - no extra

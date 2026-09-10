@@ -253,17 +253,22 @@ different layouts, not assumed symmetric).
 
 Only 4 of each market's dozens of columns are parsed: symbol, name,
 `거래정지`(halted)/`관리종목`(administrative) as tradability flags, and
-`전일거래량`(previous-day volume) as a liquidity-ranking signal -
-`scripts/scan_stocks.py`'s `STOCK_SCAN_UNIVERSE=FULL` uses it to pick a
-real top-N universe (`STOCK_SCAN_TOP_N_PER_MARKET`, default 40 per
-market) instead of scanning every listed symbol, which would run well
-into the thousands and isn't viable against KIS's confirmed ~2 req/sec
-rate limit for the per-symbol calls `scan_stock_universe()` already makes.
-KOSPI and KOSDAQ are ranked **separately**, never merged into one
-cross-market sort by market cap - KOSPI's `시가총액` column has no stated
-unit in the reference script while KOSDAQ's is explicitly "(억)", and this
-project won't compare two differently-united numbers without confirming
-they match.
+`전일거래량`(previous-day volume) as a liquidity-ranking signal.
+`scripts/scan_stocks.py` uses this by default (P39) to scan the **real,
+full** KOSPI+KOSDAQ universe: every tradable symbol, ordered by previous-
+day volume, rotated through `STOCK_SCAN_CHUNK_SIZE_PER_MARKET`-sized
+slices per market (default 250) so each stock-pass run covers the next
+chunk rather than scanning several thousand symbols in one run, which
+isn't viable against KIS's confirmed ~2 req/sec rate limit for the
+per-symbol calls `scan_stock_universe()` already makes - see
+`app/radar/universe_rotation.py`. Every tradable symbol still gets
+scanned, just spread out over successive runs instead of all at once.
+Set `STOCK_SCAN_UNIVERSE=DEFAULT` to fall back to a small 5-symbol list
+for fast local dev iteration. KOSPI and KOSDAQ are ranked **separately**,
+never merged into one cross-market sort by market cap - KOSPI's
+`시가총액` column has no stated unit in the reference script while
+KOSDAQ's is explicitly "(억)", and this project won't compare two
+differently-united numbers without confirming they match.
 
 **BLOCKED, not verified against a live response**: `new.real.download.dws.co.kr`
 is not reachable from this development sandbox (egress policy denies the

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a real KIS PRE-BREAKOUT stock scan (P23, extended in P25/P26).
+"""Run a real KIS PRE-BREAKOUT stock scan (P23, extended in P25/P26/P39).
 
 Real HTTP requests to KIS (requires `KIS_APP_KEY`/`KIS_APP_SECRET` - see
 docs/KIS_SETUP.md). Now persists results: `securities` (upsert) and
@@ -11,15 +11,24 @@ drift), this script prints a warning and still shows the scan results -
 persistence failing must never hide a real, already-computed scan.
 
 **Universe**: three ways, in priority order -
-1. `STOCK_SCAN_SYMBOLS` (comma-separated KRX 6-digit codes), if set.
-2. `STOCK_SCAN_UNIVERSE=FULL` (P30) - the real KOSPI+KOSDAQ universe from
-   KIS's KRX symbol master file (`app/integrations/kis/krx_master.py`),
-   ranked by previous-day volume and capped at `STOCK_SCAN_TOP_N_PER_MARKET`
-   (default 40) per market - not every listed symbol, since KIS's confirmed
-   ~2 req/sec rate limit makes scanning the full multi-thousand-symbol
-   universe impractical in one run. Falls back to the default list below if
-   the master-file fetch fails for any reason.
-3. Otherwise, a small default list of large, liquid KOSPI names.
+1. `STOCK_SCAN_SYMBOLS` (comma-separated KRX 6-digit codes), if set -
+   for manual testing of specific symbols.
+2. `STOCK_SCAN_UNIVERSE=DEFAULT` - the small 5-symbol list below, for
+   fast local dev iteration when you don't want to wait on a real
+   KRX master-file fetch.
+3. Otherwise (the actual default, P39) - the **real, full** KOSPI+KOSDAQ
+   universe from KIS's KRX symbol master file
+   (`app/integrations/kis/krx_master.py`), tradable-filtered and ordered
+   by previous-day volume, then **rotated** through
+   `STOCK_SCAN_CHUNK_SIZE_PER_MARKET`-sized slices per market
+   (`app/radar/universe_rotation.py`) so that every tradable symbol on
+   both markets actually gets scanned - not just the same handful
+   forever. One run can't cover several thousand symbols against KIS's
+   confirmed ~2 req/sec rate limit (see that module's own docstring),
+   so successive scheduler runs (`SCHEDULER_STOCK_INTERVAL_SECONDS`
+   apart) each cover the next chunk, cycling back to the start once
+   every symbol has been scanned. Falls back to the 5-symbol default
+   list if the master-file fetch fails for any reason.
 `securities` rows are created automatically for whatever symbols this
 script scans, no manual seeding needed.
 
@@ -73,6 +82,7 @@ from app.integrations.kis.rest_client import KOSPI_INDEX_CODE, KisRestClient
 from app.models.domain import Candle, Market
 from app.radar.candle_persistence import persist_candles
 from app.radar.regime import MarketRegime, classify_market_regime
+from app.radar.universe_rotation import select_rotation_chunk
 from app.stock_radar.persistence import persist_scan_results
 from app.stock_radar.scan import scan_stock_universe
 
@@ -84,29 +94,43 @@ _DEFAULT_SYMBOLS = [
     "035420",  # NAVER
 ]
 _HISTORY_DAYS = 200
-_DEFAULT_FULL_UNIVERSE_TOP_N_PER_MARKET = 40
+_DEFAULT_STOCK_SCAN_CHUNK_SIZE_PER_MARKET = 250
+_DEFAULT_SCHEDULER_STOCK_INTERVAL_SECONDS = 1800  # must match scripts/scheduler.py's own default
 
 
-async def _full_universe_symbols(top_n_per_market: int) -> list[str]:
-    """`STOCK_SCAN_UNIVERSE=FULL` path (P30) - real KOSPI+KOSDAQ symbols
-    from the KRX master file (`app/integrations/kis/krx_master.py`) instead
-    of `_DEFAULT_SYMBOLS`'s 5 hardcoded names. Ranked separately per market
-    by previous-day volume (not merged into one cross-market sort - see
-    that module's own docstring for why) and capped at `top_n_per_market`
-    each, since KIS's confirmed ~2 req/sec rate limit makes scanning the
-    full multi-thousand-symbol universe impractical in one run.
+async def _full_universe_symbols(chunk_size_per_market: int, now: datetime, interval_seconds: int) -> list[str]:
+    """Default universe path (P39, extends P30) - the real KOSPI+KOSDAQ
+    universe from the KRX master file (`app/integrations/kis/krx_master.py`),
+    tradable-filtered and ordered by previous-day volume (most liquid
+    first per market, not merged into one cross-market sort - see that
+    module's own docstring for why), then rotated through
+    `chunk_size_per_market`-sized slices per market via
+    `select_rotation_chunk()` so that every tradable symbol on both
+    markets actually gets scanned over successive runs, instead of the
+    same top-N-by-liquidity slice forever. `now`/`interval_seconds`
+    should match how often this script is actually invoked (the
+    scheduler's `SCHEDULER_STOCK_INTERVAL_SECONDS`) so each run advances
+    to the next chunk rather than re-scanning the current one.
     """
     async with httpx.AsyncClient(timeout=30.0) as client:
         kospi_rows, kosdaq_rows = await asyncio.gather(
             fetch_kospi_master(client), fetch_kosdaq_master(client)
         )
-    kospi_top = rank_tradable_by_liquidity(kospi_rows, top_n_per_market)
-    kosdaq_top = rank_tradable_by_liquidity(kosdaq_rows, top_n_per_market)
+    kospi_all = rank_tradable_by_liquidity(kospi_rows, len(kospi_rows))
+    kosdaq_all = rank_tradable_by_liquidity(kosdaq_rows, len(kosdaq_rows))
+    kospi_chunk = select_rotation_chunk(kospi_all, chunk_size_per_market, now, interval_seconds)
+    kosdaq_chunk = select_rotation_chunk(kosdaq_all, chunk_size_per_market, now, interval_seconds)
+    kospi_chunks_total = max(1, -(-len(kospi_all) // chunk_size_per_market)) if kospi_all else 0
+    kosdaq_chunks_total = max(1, -(-len(kosdaq_all) // chunk_size_per_market)) if kosdaq_all else 0
     print(
-        f"Using real KRX master-file universe: {len(kospi_top)} KOSPI + {len(kosdaq_top)} KOSDAQ "
-        f"symbols (top {top_n_per_market} each by previous-day volume).\n"
+        f"Using real KRX master-file universe (rotating): {len(kospi_chunk)}/{len(kospi_all)} tradable "
+        f"KOSPI symbols this run (~{kospi_chunks_total} chunks to cover the whole market) + "
+        f"{len(kosdaq_chunk)}/{len(kosdaq_all)} tradable KOSDAQ symbols "
+        f"(~{kosdaq_chunks_total} chunks) - every tradable symbol gets scanned roughly once every "
+        f"{max(kospi_chunks_total, kosdaq_chunks_total, 1)} stock-pass cycles "
+        f"({interval_seconds}s apart).\n"
     )
-    return [r.symbol for r in kospi_top] + [r.symbol for r in kosdaq_top]
+    return [r.symbol for r in kospi_chunk] + [r.symbol for r in kosdaq_chunk]
 
 
 def _flat_benchmark(length: int) -> list[Candle]:
@@ -136,10 +160,17 @@ async def run() -> None:
     symbols_raw = os.environ.get("STOCK_SCAN_SYMBOLS")
     if symbols_raw:
         symbols = [s.strip() for s in symbols_raw.split(",")]
-    elif os.environ.get("STOCK_SCAN_UNIVERSE", "").upper() == "FULL":
-        top_n_per_market = int(os.environ.get("STOCK_SCAN_TOP_N_PER_MARKET", _DEFAULT_FULL_UNIVERSE_TOP_N_PER_MARKET))
+    elif os.environ.get("STOCK_SCAN_UNIVERSE", "").upper() == "DEFAULT":
+        symbols = _DEFAULT_SYMBOLS
+    else:
+        chunk_size_per_market = int(
+            os.environ.get("STOCK_SCAN_CHUNK_SIZE_PER_MARKET", _DEFAULT_STOCK_SCAN_CHUNK_SIZE_PER_MARKET)
+        )
+        interval_seconds = int(
+            os.environ.get("SCHEDULER_STOCK_INTERVAL_SECONDS", _DEFAULT_SCHEDULER_STOCK_INTERVAL_SECONDS)
+        )
         try:
-            symbols = await _full_universe_symbols(top_n_per_market)
+            symbols = await _full_universe_symbols(chunk_size_per_market, datetime.now(UTC), interval_seconds)
         except (KisApiError, httpx.HTTPError, KeyError, ValueError) as exc:
             print(
                 f"WARNING: KRX master-file fetch failed ({exc!r}) - falling back to the "
@@ -147,8 +178,6 @@ async def run() -> None:
                 "app/integrations/kis/krx_master.py's docstring.\n"
             )
             symbols = _DEFAULT_SYMBOLS
-    else:
-        symbols = _DEFAULT_SYMBOLS
 
     end_date = datetime.now(UTC).strftime("%Y%m%d")
     start_date = (datetime.now(UTC) - timedelta(days=_HISTORY_DAYS)).strftime("%Y%m%d")
