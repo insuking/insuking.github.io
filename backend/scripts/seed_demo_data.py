@@ -24,13 +24,22 @@ sys.path.insert(0, ".")
 
 from sqlalchemy import delete
 
-from app.db.models import Candle, Incident, Position, Recommendation, RiskStateRow
+from app.db.models import (
+    Candle,
+    DailyDecisionRow,
+    Incident,
+    OverheatScoreRow,
+    Position,
+    Recommendation,
+    RiskStateRow,
+)
 from app.db.session import session_scope
 from app.guardian.health import SERVICE_NAME as GUARDIAN_SERVICE
 from app.guardian.health import record_heartbeat
 from app.models.domain import HealthState
 
 _DEMO_SYMBOL = "KRW-BTC"
+_DEMO_KOSPI_SYMBOL = "0001"
 
 
 async def _clear_previous() -> None:
@@ -40,6 +49,8 @@ async def _clear_previous() -> None:
         await session.execute(delete(RiskStateRow).where(RiskStateRow.id.like("demo-%")))
         await session.execute(delete(Incident).where(Incident.id.like("demo-%")))
         await session.execute(delete(Candle).where(Candle.id.like("demo-%")))
+        await session.execute(delete(DailyDecisionRow).where(DailyDecisionRow.market_regime == "DEMO"))
+        await session.execute(delete(OverheatScoreRow).where(OverheatScoreRow.symbol.like("DEMO-%")))
         await session.commit()
 
 
@@ -154,12 +165,86 @@ async def seed() -> None:
                     close_time=now - timedelta(minutes=20 - i),
                 )
             )
+        # P37: real daily KOSPI candles so the 시장 tab's domestic-market
+        # regime read has something to classify from - a gentle uptrend so
+        # the demo shows RISK_ON, not another "데이터 없음".
+        for i in range(21):
+            close = 2_600.0 + i * 3.5
+            session.add(
+                Candle(
+                    id=f"demo-kospi-candle-{i}",
+                    symbol=_DEMO_KOSPI_SYMBOL,
+                    interval="1d",
+                    open=close - 5.0,
+                    high=close + 6.0,
+                    low=close - 8.0,
+                    close=close,
+                    volume=450_000_000.0,
+                    open_time=now - timedelta(days=21 - i),
+                    close_time=now - timedelta(days=20 - i),
+                )
+            )
+        # P36: today's no-trade decision so the 시장 탭's "오늘의 판정" card
+        # and the 성과 탭's risk_avoidance count have something real to show.
+        session.add(
+            DailyDecisionRow(
+                id="demo-decision-1",
+                observed_at=now,
+                market_regime="DEMO",
+                minimum_score=82.0,
+                decision_state="BUY",
+                top_symbol="005930",
+                top_symbol_name="삼성전자",
+                top_normalized_score=86.5,
+                entry_filters_passed=6,
+                entry_filters_total=7,
+                reason="PRE-BREAKOUT 86.5점, TOO LATE 아님, 진입필터 6/7 통과",
+                created_at=now,
+            )
+        )
+        session.add(
+            DailyDecisionRow(
+                id="demo-decision-2",
+                observed_at=now - timedelta(days=1),
+                market_regime="DEMO",
+                minimum_score=85.0,
+                decision_state="NO_TRADE_DAY",
+                top_symbol=None,
+                top_symbol_name=None,
+                top_normalized_score=None,
+                entry_filters_passed=None,
+                entry_filters_total=None,
+                reason="오늘 재확인된 CONFIRMED 후보가 없습니다",
+                created_at=now - timedelta(days=1),
+            )
+        )
+        # P35: one TOO_LATE-excluded reading so risk_avoidance's exclusion
+        # count is non-zero in the demo.
+        session.add(
+            OverheatScoreRow(
+                symbol="DEMO-000660",
+                observed_at=now - timedelta(hours=2),
+                return_1d_pct=9.5,
+                return_2d_pct=16.0,
+                return_5d_pct=21.0,
+                distance_from_signal_pct=9.0,
+                gap_pct=1.0,
+                volume_ratio=2.0,
+                atr_extension=1.5,
+                heat_score=100.0,
+                status="TOO_LATE",
+                created_at=now - timedelta(hours=2),
+            )
+        )
         await session.commit()
 
     async with session_scope() as session:
         await record_heartbeat(session, state=HealthState.HEALTHY, message="guardian nominal (demo)")
 
-    print("Seeded demo data: 2 recommendations, 1 position, 1 risk snapshot, 1 incident, 21 BTC candles.")
+    print(
+        "Seeded demo data: 2 recommendations, 1 position, 1 risk snapshot, 1 incident, "
+        "21 BTC candles, 21 KOSPI candles, 2 daily decisions, 1 overheat reading."
+    )
     print(f"Guardian heartbeat ({GUARDIAN_SERVICE}) recorded as HEALTHY.")
 
 
