@@ -46,6 +46,7 @@ from app.stock_radar.entry_confirmation import (
     confirm_entry,
 )
 from app.stock_radar.investor_flow import InvestorFlowBar
+from app.stock_radar.overheat import HeatScore, HeatStatus, compute_heat_score
 from app.stock_radar.recommendation import build_stock_recommendation
 from app.stock_radar.scoring import (
     DEFAULT_WEIGHTS,
@@ -191,7 +192,7 @@ async def build_confirmed_recommendations(
     start_date: str,
     end_date: str,
     names: dict[str, str] | None = None,
-) -> list[Recommendation]:
+) -> tuple[list[Recommendation], dict[str, HeatScore]]:
     """P31's thin I/O wrapper: for each CONFIRMED verdict, fetch fresh
     daily candles (`KisRestClient.get_daily_prices()` - already P23-
     verified, no new endpoint risk) for `build_stock_recommendation()`'s
@@ -206,10 +207,23 @@ async def build_confirmed_recommendations(
     entirely (the default) rather than defaulted to `{}` inline, so a
     caller that has no name source is explicit about it rather than
     silently getting `None` names for a reason buried in this function.
+
+    **P35**: also runs `compute_heat_score()` on the same candles (no
+    extra fetch) and skips building a `Recommendation` entirely when the
+    result is `HeatStatus.TOO_LATE` - "Radar Score가 90점이어도 신규 매수
+    추천에서는 제거" from this phase's own spec: a confirmed, well-scored
+    setup that has already run too far is excluded from new-entry
+    recommendations regardless of score, the same never-fabricate,
+    never-recommend-a-chase discipline `entry_confirmation.py`'s gap gate
+    already applies for a different reason. Every symbol's `HeatScore` -
+    TOO_LATE or not - is returned alongside the recommendations (not just
+    the survivors) so a caller can persist the full picture, not only the
+    candidates that passed.
     """
     scores_by_symbol = {s.symbol: s for s in scores}
     names = names or {}
     recommendations: list[Recommendation] = []
+    heat_scores: dict[str, HeatScore] = {}
     for confirmation in confirmations:
         if confirmation.verdict != EntryVerdict.CONFIRMED:
             continue
@@ -220,9 +234,18 @@ async def build_confirmed_recommendations(
             candles = await rest.get_daily_prices(confirmation.symbol, start_date, end_date)
         except (KisApiError, KeyError, ValueError):
             continue
+
+        heat = compute_heat_score(
+            candles, entry_reference_price=score.reference_close, gap_pct=confirmation.gap_pct
+        )
+        if heat is not None:
+            heat_scores[confirmation.symbol] = heat
+        if heat is not None and heat.status == HeatStatus.TOO_LATE:
+            continue
+
         rec = build_stock_recommendation(
             score, confirmation, candles, account_buying_power, name=names.get(confirmation.symbol)
         )
         if rec is not None:
             recommendations.append(rec)
-    return recommendations
+    return recommendations, heat_scores

@@ -34,8 +34,27 @@ CONFIRMED on a later run doesn't linger as a stale recommendation.
 **P33**: each persisted `Recommendation` also carries the symbol's
 Korean company name (`app/stock_radar/persistence.py`'s
 `get_security_names()`, reading the same `securities` table
-`scan_stocks.py` already upserts) - the 추천 tab shown a bare 6-digit
+`scan_stocks.py` already upserts) - the 추천 탭 tab shown a bare 6-digit
 KRX code with no name told a user nothing.
+
+**P35**: `build_confirmed_recommendations()` now also returns a
+`HeatScore` per symbol it evaluated (`app/stock_radar/overheat.py`) and
+already excludes a TOO_LATE candidate from `recommendations` itself -
+every one of those readings, not just the survivors, is persisted to
+`overheat_scores` here so a later review can see what got filtered and
+why, not just what got through.
+
+**P34**: for each CONFIRMED symbol, also computes and persists a Market
+Regime x Relative Strength interaction reading
+(`app/stock_radar/regime_interaction.py`) - the benchmark's 1-day return
+from the same KOSPI candles already fetched for the regime read above,
+the stock's 1-day return reused directly from its own `HeatScore`
+(`return_1d_pct` - the exact same number, not recomputed), and today's/
+yesterday's foreign+institution net flow via one extra
+`KisRestClient.get_investor_trend()` call per CONFIRMED symbol (the same
+P25 endpoint `scan_stocks.py` already uses, not a new integration risk).
+Only run for CONFIRMED symbols, not every scored candidate, to keep this
+script's request volume roughly what it already was.
 """
 
 from __future__ import annotations
@@ -60,7 +79,11 @@ from app.integrations.kis.errors import KisApiError
 from app.integrations.kis.rest_client import KOSPI_INDEX_CODE, KisRestClient
 from app.models.domain import Recommendation
 from app.radar.regime import MarketRegime, classify_market_regime
+from app.stock_radar.entry_confirmation import EntryVerdict
+from app.stock_radar.overheat import HeatScore, HeatStatus
 from app.stock_radar.persistence import get_latest_scan, get_security_names
+from app.stock_radar.regime_interaction import compute_interaction_score
+from app.stock_radar.regime_persistence import persist_interaction_score, upsert_heat_score
 from app.stock_radar.scan import build_confirmed_recommendations, reconfirm_candidates
 from app.stock_radar.scoring import PreBreakoutScore, ScoreFactor
 
@@ -114,6 +137,70 @@ async def _persist_recommendations(recommendations: list[Recommendation]) -> Non
                     created_at=rec.created_at,
                     expires_at=rec.expires_at,
                 )
+            )
+        await session.commit()
+
+
+async def _persist_heat_scores(heat_scores: dict[str, HeatScore], observed_at: datetime) -> None:
+    async with session_scope() as session:
+        for symbol, score in heat_scores.items():
+            await upsert_heat_score(session, symbol=symbol, score=score, observed_at=observed_at)
+        await session.commit()
+
+
+async def _persist_interaction_scores(
+    rest: KisRestClient,
+    confirmed_symbols: list[str],
+    heat_scores: dict[str, HeatScore],
+    benchmark_return_pct: float,
+    regime: MarketRegime,
+    observed_at: datetime,
+) -> None:
+    """One `get_investor_trend()` call per CONFIRMED symbol - a bad or
+    missing flow response degrades that one symbol to a flow-less
+    interaction read (no FLOW_NOT_PERSISTENT/market-plunge-with-flow
+    bonus, price-only resilience still scored) rather than skipping it
+    entirely, matching `scan_stock_universe()`'s own per-symbol
+    degrade-not-crash pattern for this same endpoint.
+    """
+    async with session_scope() as session:
+        for symbol in confirmed_symbols:
+            heat = heat_scores.get(symbol)
+            if heat is None:
+                continue
+
+            foreign_today = institution_today = 0.0
+            foreign_prev: float | None = None
+            institution_prev: float | None = None
+            try:
+                flow_bars = await rest.get_investor_trend(symbol)
+            except (KisApiError, KeyError, ValueError):
+                flow_bars = []
+            if flow_bars:
+                foreign_today = flow_bars[-1].foreign_net_qty
+                institution_today = flow_bars[-1].institution_net_qty
+                if len(flow_bars) >= 2:
+                    foreign_prev = flow_bars[-2].foreign_net_qty
+                    institution_prev = flow_bars[-2].institution_net_qty
+
+            score = compute_interaction_score(
+                benchmark_return_pct=benchmark_return_pct,
+                stock_return_pct=heat.return_1d_pct,
+                foreign_net_today=foreign_today,
+                institution_net_today=institution_today,
+                foreign_net_prev_day=foreign_prev,
+                institution_net_prev_day=institution_prev,
+            )
+            await persist_interaction_score(
+                session,
+                symbol=symbol,
+                market_regime=regime.value,
+                benchmark_return_pct=benchmark_return_pct,
+                stock_return_pct=heat.return_1d_pct,
+                foreign_net_today=foreign_today,
+                institution_net_today=institution_today,
+                score=score,
+                observed_at=observed_at,
             )
         await session.commit()
 
@@ -176,10 +263,27 @@ async def run() -> None:
 
         atr_end_date = end_date
         atr_start_date = (datetime.now(UTC) - timedelta(days=_ATR_HISTORY_DAYS)).strftime("%Y%m%d")
-        recommendations = await build_confirmed_recommendations(
+        recommendations, heat_scores = await build_confirmed_recommendations(
             rest, scores, confirmations, account_buying_power, atr_start_date, atr_end_date, names=names
         )
 
+        too_late_symbols = [s for s, h in heat_scores.items() if h.status == HeatStatus.TOO_LATE]
+        if too_late_symbols:
+            print(f"\nTOO_LATE (신규 진입 제외): {', '.join(too_late_symbols)}")
+
+        benchmark_return_pct = 0.0
+        if len(benchmark_candles) >= 2:
+            prev_close = benchmark_candles[-2].close
+            if prev_close > 0:
+                benchmark_return_pct = (benchmark_candles[-1].close / prev_close - 1) * 100
+
+        confirmed_symbols = [c.symbol for c in confirmations if c.verdict == EntryVerdict.CONFIRMED]
+        observed_at = datetime.now(UTC)
+        await _persist_interaction_scores(
+            rest, confirmed_symbols, heat_scores, benchmark_return_pct, regime, observed_at
+        )
+
+    await _persist_heat_scores(heat_scores, observed_at)
     await _persist_recommendations(recommendations)
 
     if recommendations:

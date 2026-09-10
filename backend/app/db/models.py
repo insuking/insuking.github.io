@@ -498,3 +498,58 @@ class ModelWeightVersionRow(Base):
     effective_from: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     effective_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class RegimeRelativeStrengthRow(Base):
+    """P34: one symbol's Market Regime x Relative Strength interaction
+    reading for one scan run - `app/stock_radar/regime_interaction.py`'s
+    `InteractionScore`, persisted for later review (see that module's own
+    docstring for exactly what each score means and what's deliberately
+    not implemented - no sector-index or program-flow columns here, since
+    this project has no data source for either). Keyed by generated `id`
+    + indexed `symbol`, same append-only-per-run shape as `radar_scores`
+    (`RadarScoreRow`) rather than one mutable row per symbol, so a
+    history of readings survives across scans."""
+
+    __tablename__ = "regime_relative_strength"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    symbol: Mapped[str] = mapped_column(String, index=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    benchmark_return_pct: Mapped[float] = mapped_column(Float)
+    stock_return_pct: Mapped[float] = mapped_column(Float)
+    foreign_net_today: Mapped[float] = mapped_column(Float)
+    institution_net_today: Mapped[float] = mapped_column(Float)
+    market_regime: Mapped[str] = mapped_column(String)
+    weak_market_resilience_score: Mapped[float] = mapped_column(Float)
+    flow_resilience_score: Mapped[float] = mapped_column(Float)
+    interaction_score: Mapped[float] = mapped_column(Float)
+    label: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class OverheatScoreRow(Base):
+    """P35: one symbol's Overheat/TOO LATE reading for one scan run -
+    `app/stock_radar/overheat.py`'s `HeatScore`. `(symbol, observed_at)`
+    as the primary key (rather than a generated id) matches this phase's
+    own spec exactly - one reading per symbol per observation time, not
+    an open-ended append log, since a later run for the same symbol at
+    the same `observed_at` should replace rather than duplicate (same
+    idempotent-upsert intent `SecurityRow` already uses for `name`/
+    `market`, just enforced here at the schema level via the composite
+    key instead of application-level upsert logic)."""
+
+    __tablename__ = "overheat_scores"
+
+    symbol: Mapped[str] = mapped_column(String, primary_key=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    return_1d_pct: Mapped[float] = mapped_column(Float)
+    return_2d_pct: Mapped[float] = mapped_column(Float)
+    return_5d_pct: Mapped[float] = mapped_column(Float)
+    distance_from_signal_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    gap_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    volume_ratio: Mapped[float] = mapped_column(Float)
+    atr_extension: Mapped[float | None] = mapped_column(Float, nullable=True)
+    heat_score: Mapped[float] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

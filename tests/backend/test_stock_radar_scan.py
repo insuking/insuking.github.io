@@ -19,6 +19,7 @@ from app.integrations.kis.rest_client import KisRestClient
 from app.models.domain import Candle
 from app.radar.regime import MarketRegime
 from app.stock_radar.entry_confirmation import EntryConfirmation, EntryVerdict
+from app.stock_radar.overheat import HeatStatus
 from app.stock_radar.scan import (
     build_confirmed_recommendations,
     rank_prebreakout_candidates,
@@ -311,7 +312,7 @@ async def test_build_confirmed_recommendations_creates_one_per_confirmed_symbol(
         EntryConfirmation(symbol="000660", verdict=EntryVerdict.REJECTED, gap_pct=6.0, current_price=106000.0),
     ]
 
-    recommendations = await build_confirmed_recommendations(
+    recommendations, heat_scores = await build_confirmed_recommendations(
         rest, scores, confirmations, account_buying_power=10_000_000.0, start_date="20260101", end_date="20260201"
     )
 
@@ -319,6 +320,7 @@ async def test_build_confirmed_recommendations_creates_one_per_confirmed_symbol(
     assert recommendations[0].symbol == "005930"
     assert recommendations[0].entry_low == pytest.approx(101000.0)
     assert recommendations[0].name is None  # no `names` dict passed - never fabricated
+    assert "005930" in heat_scores
 
 
 @pytest.mark.P33
@@ -341,7 +343,7 @@ async def test_build_confirmed_recommendations_carries_names_through_when_given(
         EntryConfirmation(symbol="005930", verdict=EntryVerdict.CONFIRMED, gap_pct=1.0, current_price=101000.0)
     ]
 
-    recommendations = await build_confirmed_recommendations(
+    recommendations, _heat_scores = await build_confirmed_recommendations(
         rest,
         scores,
         confirmations,
@@ -353,6 +355,48 @@ async def test_build_confirmed_recommendations_carries_names_through_when_given(
 
     assert len(recommendations) == 1
     assert recommendations[0].name == "삼성전자"
+
+
+def _daily_price_response_with_final_spike(count: int, base: float, spike_close: float) -> dict:
+    """Same shape as `_daily_price_response()` but the last bar's close is
+    overridden - isolates a single day's move so `return_1d_pct` alone
+    can be pushed past the P35 TOO_LATE threshold without also faking an
+    unrealistic multi-day trend."""
+    response = _daily_price_response(count, base)
+    rows = response["output2"]
+    last = rows[-1]
+    rows[-1] = {**last, "stck_clpr": str(spike_close), "stck_hgpr": str(spike_close + 1000)}
+    return response
+
+
+@pytest.mark.P35
+@pytest.mark.asyncio
+async def test_build_confirmed_recommendations_excludes_a_too_late_candidate_even_with_a_high_score() -> None:
+    settings = Settings(kis_app_key="test-key", kis_app_secret="test-secret")  # type: ignore[call-arg]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth2/tokenP":
+            return httpx.Response(200, json={"access_token": "test-token", "expires_in": 86400})
+        if request.url.path == "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice":
+            # +10% on the final bar alone - clears the P35 1-day TOO_LATE bar (8%).
+            return httpx.Response(200, json=_daily_price_response_with_final_spike(20, 100000.0, 111000.0))
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://mock.kis.test")
+    rest = KisRestClient(client, KisAuth(client=client, settings=settings))
+
+    # A near-maximal score - even this must not survive the heat gate.
+    scores = [PreBreakoutScore(symbol="005930", total_score=64.0, max_available=65.0, reference_close=100000.0)]
+    confirmations = [
+        EntryConfirmation(symbol="005930", verdict=EntryVerdict.CONFIRMED, gap_pct=1.0, current_price=111000.0)
+    ]
+
+    recommendations, heat_scores = await build_confirmed_recommendations(
+        rest, scores, confirmations, account_buying_power=10_000_000.0, start_date="20260101", end_date="20260201"
+    )
+
+    assert recommendations == []
+    assert heat_scores["005930"].status == HeatStatus.TOO_LATE
 
 
 @pytest.mark.P31
@@ -375,8 +419,9 @@ async def test_build_confirmed_recommendations_skips_symbol_on_candle_fetch_fail
         EntryConfirmation(symbol="005930", verdict=EntryVerdict.CONFIRMED, gap_pct=1.0, current_price=101000.0)
     ]
 
-    recommendations = await build_confirmed_recommendations(
+    recommendations, heat_scores = await build_confirmed_recommendations(
         rest, scores, confirmations, account_buying_power=10_000_000.0, start_date="20260101", end_date="20260201"
     )
 
     assert recommendations == []
+    assert heat_scores == {}  # candle fetch failed - nothing to compute heat from either
