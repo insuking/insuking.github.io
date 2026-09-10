@@ -36,6 +36,13 @@ safe to start even before KIS credentials are configured.
 - an exception from one cycle (a transient KIS/Upbit error, a DB hiccup)
 is logged and swallowed, never crashes the loop. Matches the
 degrade-not-crash pattern already used inside `app/stock_radar/scan.py`.
+
+**P38 macro pass**: `scan_macro.py`'s premarket check is a once-a-day,
+wall-clock-time job, not an interval job like the crypto/stock passes -
+it runs the first cycle whose KST time-of-day is at or after 08:20 and
+that hasn't already run that KST calendar date, tracked by
+`last_macro_run_date` (a `date`, not a timestamp) the same way
+`last_stock_run_at` tracks the stock pass's interval.
 """
 
 from __future__ import annotations
@@ -45,15 +52,16 @@ import os
 import sys
 import traceback
 from collections.abc import Awaitable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time
 
 sys.path.insert(0, ".")
 
-from app.scheduler.market_hours import is_krx_trading_hours
-from scripts import reconfirm_entries, scan_crypto, scan_stocks
+from app.scheduler.market_hours import KST, is_krx_trading_hours
+from scripts import reconfirm_entries, scan_crypto, scan_macro, scan_stocks
 
 _CRYPTO_INTERVAL_SECONDS = int(os.environ.get("SCHEDULER_CRYPTO_INTERVAL_SECONDS", "300"))
 _STOCK_INTERVAL_SECONDS = int(os.environ.get("SCHEDULER_STOCK_INTERVAL_SECONDS", "1800"))
+_MACRO_CHECK_TIME = time(8, 20)
 
 
 async def _run_safely(label: str, coro: Awaitable[None]) -> None:
@@ -64,15 +72,21 @@ async def _run_safely(label: str, coro: Awaitable[None]) -> None:
         traceback.print_exc()
 
 
-async def run_cycle(now: datetime, seconds_since_last_stock_run: float | None) -> bool:
-    """One iteration: always runs the crypto scan, and runs the stock
-    scan + reconfirm pass if `now` is inside KRX trading hours AND either
-    the stock pass has never run yet (`seconds_since_last_stock_run is
-    None`) or at least `SCHEDULER_STOCK_INTERVAL_SECONDS` has passed since
-    it last did. Returns whether the stock pass ran, as a plain return
-    value rather than a mutated counter, so the caller decides how to
-    track "last run" and this function stays trivially testable with
-    monkeypatched scan/reconfirm coroutines.
+async def run_cycle(
+    now: datetime,
+    seconds_since_last_stock_run: float | None,
+    last_macro_run_date: date | None = None,
+) -> tuple[bool, bool]:
+    """One iteration: always runs the crypto scan, runs the stock scan +
+    reconfirm pass if `now` is inside KRX trading hours AND either the
+    stock pass has never run yet (`seconds_since_last_stock_run is None`)
+    or at least `SCHEDULER_STOCK_INTERVAL_SECONDS` has passed since it
+    last did, and runs the P38 macro pass if `now`'s KST time-of-day is
+    at or after 08:20 and it hasn't already run on `now`'s KST calendar
+    date. Returns `(ran_stock, ran_macro)` as plain return values rather
+    than mutated counters, so the caller decides how to track "last run"
+    and this function stays trivially testable with monkeypatched
+    scan/reconfirm coroutines.
     """
     await _run_safely("crypto scan", scan_crypto.run())
 
@@ -82,23 +96,33 @@ async def run_cycle(now: datetime, seconds_since_last_stock_run: float | None) -
     if should_run_stock:
         await _run_safely("stock scan", scan_stocks.run())
         await _run_safely("stock reconfirm", reconfirm_entries.run())
-    return should_run_stock
+
+    now_kst = now.astimezone(KST) if now.tzinfo is not None else now.replace(tzinfo=UTC).astimezone(KST)
+    should_run_macro = now_kst.time() >= _MACRO_CHECK_TIME and last_macro_run_date != now_kst.date()
+    if should_run_macro:
+        await _run_safely("macro check", scan_macro.run())
+
+    return should_run_stock, should_run_macro
 
 
 async def run_forever() -> None:
     last_stock_run_at: float | None = None
+    last_macro_run_date: date | None = None
     print(
         f"[scheduler] started - crypto scan every {_CRYPTO_INTERVAL_SECONDS}s (24/7), "
         f"stock scan+reconfirm every {_STOCK_INTERVAL_SECONDS}s during KRX trading hours "
-        "(09:00-15:30 KST, Mon-Fri)."
+        "(09:00-15:30 KST, Mon-Fri), macro check once daily at/after 08:20 KST."
     )
     while True:
         loop_time = asyncio.get_event_loop().time()
         elapsed = None if last_stock_run_at is None else loop_time - last_stock_run_at
 
-        ran_stock = await run_cycle(datetime.now(UTC), elapsed)
+        now = datetime.now(UTC)
+        ran_stock, ran_macro = await run_cycle(now, elapsed, last_macro_run_date)
         if ran_stock:
             last_stock_run_at = asyncio.get_event_loop().time()
+        if ran_macro:
+            last_macro_run_date = now.astimezone(KST).date()
 
         await asyncio.sleep(_CRYPTO_INTERVAL_SECONDS)
 

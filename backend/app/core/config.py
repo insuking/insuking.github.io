@@ -148,6 +148,21 @@ class Settings(BaseSettings):
     # setting - Upbit's own `KRW-BTC` market symbol is unambiguous.
     market_index_symbol: str | None = "0001"
 
+    # P38 daily premarket macro check (08:20 KST) - Yahoo Finance's public
+    # `/v8/finance/chart/{symbol}` endpoint, no API key needed (same
+    # "public, no auth" tier as Upbit's REST API - see
+    # app/integrations/market_macro/rest_client.py). Symbols are the
+    # standard Yahoo Finance tickers for each instrument this check
+    # reads: `^GSPC` (S&P 500), `^SOX` (Philadelphia Semiconductor Index),
+    # `^VIX` (CBOE Volatility Index), `CL=F` (WTI crude oil front-month
+    # future), `KRW=X` (USD/KRW spot).
+    macro_rest_base_url: str = "https://query1.finance.yahoo.com"
+    macro_sp500_symbol: str = "^GSPC"
+    macro_sox_symbol: str = "^SOX"
+    macro_vix_symbol: str = "^VIX"
+    macro_oil_symbol: str = "CL=F"
+    macro_usdkrw_symbol: str = "KRW=X"
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -28,6 +28,7 @@ from app.db.models import (
     Candle,
     DailyDecisionRow,
     Incident,
+    MacroSnapshotRow,
     OverheatScoreRow,
     Position,
     Recommendation,
@@ -51,6 +52,7 @@ async def _clear_previous() -> None:
         await session.execute(delete(Candle).where(Candle.id.like("demo-%")))
         await session.execute(delete(DailyDecisionRow).where(DailyDecisionRow.market_regime == "DEMO"))
         await session.execute(delete(OverheatScoreRow).where(OverheatScoreRow.symbol.like("DEMO-%")))
+        await session.execute(delete(MacroSnapshotRow).where(MacroSnapshotRow.headline.like("DEMO-%")))
         await session.commit()
 
 
@@ -236,6 +238,21 @@ async def seed() -> None:
                 created_at=now - timedelta(hours=2),
             )
         )
+        # P38: today's premarket macro check so the 시장 탭's "해외 매크로"
+        # card has a real-shaped reading instead of another "데이터 없음".
+        session.add(
+            MacroSnapshotRow(
+                observed_at=now - timedelta(hours=1),
+                sp500_change_pct=0.6,
+                sox_change_pct=1.1,
+                vix_level=14.2,
+                oil_change_pct=-0.8,
+                usdkrw_change_pct=-0.2,
+                regime="RISK_ON",
+                headline="DEMO-VIX 14.2, S&P500 +0.6%, SOX +1.1% - 우호적",
+                created_at=now - timedelta(hours=1),
+            )
+        )
         await session.commit()
 
     async with session_scope() as session:
@@ -243,7 +260,7 @@ async def seed() -> None:
 
     print(
         "Seeded demo data: 2 recommendations, 1 position, 1 risk snapshot, 1 incident, "
-        "21 BTC candles, 21 KOSPI candles, 2 daily decisions, 1 overheat reading."
+        "21 BTC candles, 21 KOSPI candles, 2 daily decisions, 1 overheat reading, 1 macro snapshot."
     )
     print(f"Guardian heartbeat ({GUARDIAN_SERVICE}) recorded as HEALTHY.")
 

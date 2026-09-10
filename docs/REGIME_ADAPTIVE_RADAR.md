@@ -1,4 +1,4 @@
-# Regime-Adaptive Radar (P34-P37)
+# Regime-Adaptive Radar (P34-P38)
 
 This extends the stock radar from "rank candidates by a single score" to
 three additional, independent signals layered on top: how a symbol's
@@ -7,7 +7,8 @@ already moved too far to chase (P35), and a final BUY/WATCH/NO_BUY/
 NO_TRADE_DAY call that treats "nothing worth buying today" as a normal,
 successful outcome rather than an absence to work around (P36) - plus the
 real benchmark-candle persistence (P37) that closes the gap that was
-causing the 시장 tab's "데이터 없음" for the domestic market.
+causing the 시장 tab's "데이터 없음" for the domestic market, and the
+08:20 KST premarket macro check (P38).
 
 ## P34 - Market Regime x Relative Strength Interaction Engine
 
@@ -97,6 +98,59 @@ persist on a successful real fetch - the flat placeholder fallback used
 when a fetch fails is never written, so a real "no data yet" state stays
 distinguishable from real data.
 
+## P38 - Daily 08:20 KST Premarket Macro Check
+
+Fetches real S&P500, SOX(필라델피아 반도체지수), VIX, WTI 유가, and
+USD/KRW data from Yahoo Finance's public `/v8/finance/chart/{symbol}`
+endpoint (no API key needed - same "public, no auth" tier as Upbit's
+REST API) via `app/integrations/market_macro/rest_client.py`, classifies
+it into `MacroRegime` (RISK_ON/NEUTRAL/RISK_OFF) with a one-line Korean
+headline via `app/radar/macro_regime.py`'s `classify_macro_regime()`, and
+persists it to a new `macro_snapshots` table
+(`app/radar/macro_persistence.py`).
+
+**Advisory only, deliberately not wired into P35/P36's gating**: this
+project's standing rule is that the system must never become fully
+autonomous - every real-money action still requires explicit human
+approval every time. Feeding an unvalidated, un-backtested macro
+threshold into P36's automatic NO_TRADE_DAY/TOO_LATE logic would let this
+phase silently block legitimate trades. So the reading is surfaced on the
+시장 탭's "해외 매크로 (프리마켓 체크)" card - exactly how the original
+request framed the 08:20 daily check-in: something a person reviews each
+morning, not an automatic filter. The card itself says as much
+("참고용 신호입니다..."). Wiring it into `decide_entry_state()`'s scoring
+is a natural next step once these thresholds have real trading outcomes
+to validate against.
+
+**Scheduling**: `scripts/scheduler.py`'s `run_cycle()` runs
+`scripts/scan_macro.py` once per KST calendar date, on the first cycle
+whose KST time-of-day is at or after 08:20 - a wall-clock-time job, not
+an interval job like the crypto/stock passes (tracked via
+`last_macro_run_date`, a `date`, not a timestamp).
+
+**Thresholds are a first, documented pass, not a tuned model** - there is
+no backtest harness for macro thresholds yet (see this doc's Known gaps
+for the same caveat on P34-P36's own thresholds). Any one of VIX >= 25,
+S&P500 <= -1.5%, SOX <= -2.5%, |WTI oil| >= 4%, or USD/KRW >= +1.0%
+(KRW weakening) is independently enough to call RISK_OFF; RISK_ON needs
+VIX <= 15 AND S&P500 >= +0.5% AND SOX >= +0.5% together (the same
+asymmetry P34 already uses - easy to flag caution, hard to declare "all
+clear"). A single symbol's fetch failing degrades that one metric to
+`None` (never a fabricated 0) rather than aborting the whole snapshot.
+
+**Live-network test status**: like this project's other public-API
+integrations, this sandbox's outbound egress is restricted to an
+allowlist that does not include query1.finance.yahoo.com - a live call
+against the real endpoint has not been exercised from this environment
+(confirmed via a direct `curl` returning a proxy `connect_rejected`), so
+`app/integrations/market_macro/rest_client.py`'s parsing is unit-tested
+against Yahoo's documented chart-API JSON shape instead
+(`tests/backend/test_market_macro_rest_client.py`) - the same accepted
+pattern this project already used for KIS/Toss/Upbit's own
+real-connection tests (P3/P5/P7). Verify against the real endpoint once
+deployed somewhere with open egress (a normal Docker Compose host,
+unlike this sandboxed dev container, typically has this).
+
 ## Known gaps - explicitly out of scope this pass, not silently skipped
 
 Some pieces the original request asked for still have no real data
@@ -120,10 +174,6 @@ honestly build and test. Listed here rather than faked:
   snapshots per symbol per day already exist and are queryable by
   `observed_at`. Coarser than tick-level RS, but real data, not a guess.
   A dedicated read helper/API for it is still a follow-up, not yet built.
-- **08:20 daily macro-regime check** (미국장/SOX/VIX/유가/환율): no
-  integration exists for any of those data sources. `reconfirm_entries.py`
-  already documents that its own output only means anything during real
-  KRX hours; a pre-market macro read is a genuinely separate integration.
 - **Weekly weight auto-retuning / labeling learning loop**: `regime_
   relative_strength.label` and a symbol's eventual outcome give the raw
   material for this, but the retuning process itself needs real trading

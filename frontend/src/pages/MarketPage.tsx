@@ -80,6 +80,24 @@ export function MarketPage() {
             )}
           </section>
           <section className="card">
+            <p className="card-title">해외 매크로 (프리마켓 체크)</p>
+            {summary.macro_regime === null ? (
+              <p className="muted">아직 오늘의 매크로 체크 결과가 없습니다 (매일 08:20 KST 실행).</p>
+            ) : (
+              <>
+                <p className="muted">{REGIME_LABEL[summary.macro_regime] ?? summary.macro_regime}</p>
+                {summary.macro_headline && <p className="muted small">{summary.macro_headline}</p>}
+                {freshnessText(summary.macro_observed_at) && (
+                  <p className="muted small">{freshnessText(summary.macro_observed_at)}</p>
+                )}
+                <p className="muted small">
+                  참고용 신호입니다 - 이 값만으로 자동 매매 여부가 결정되지 않으며, 매수/매도는 항상 사람의
+                  승인이 필요합니다.
+                </p>
+              </>
+            )}
+          </section>
+          <section className="card">
             <p className="card-title">오늘의 판정</p>
             {summary.stock_decision_state === null ? (
               <p className="muted">아직 오늘의 재확인 스캔 결과가 없습니다.</p>

@@ -18,6 +18,7 @@ from app.db.models import (
     Fill,
     Incident,
     KakaoAccount,
+    MacroSnapshotRow,
     Order,
     OverheatScoreRow,
     PaperAccount,
@@ -34,6 +35,8 @@ from app.guardian.health import SERVICE_NAME as GUARDIAN_SERVICE
 from app.guardian.health import record_heartbeat
 from app.main import app
 from app.models.domain import HealthState
+from app.radar.macro_persistence import persist_macro_snapshot
+from app.radar.macro_regime import MacroReading, MacroRegime
 from app.stock_radar.decision import DecisionState, EntryDecision
 from app.stock_radar.decision_persistence import persist_daily_decision
 from app.stock_radar.overheat import HeatScore, HeatStatus
@@ -59,6 +62,7 @@ async def _cleanup():  # type: ignore[no-untyped-def]
         await session.execute(delete(Candle).where(Candle.symbol.in_([_SYMBOL, "KRW-BTC", "0001"])))
         await session.execute(delete(OverheatScoreRow).where(OverheatScoreRow.symbol == _SYMBOL))
         await session.execute(delete(DailyDecisionRow).where(DailyDecisionRow.market_regime == "TEST-DASH-REGIME"))
+        await session.execute(delete(MacroSnapshotRow).where(MacroSnapshotRow.headline.like("TEST-DASH-MACRO%")))
 
         await session.execute(delete(Fill).where(Fill.order_id.like("dash-order-%")))
         await session.execute(delete(Order).where(Order.id.like("dash-order-%")))
@@ -82,6 +86,7 @@ async def test_summary_reports_offline_guardian_and_empty_lists_on_a_clean_slate
     guardian = next(sh for sh in body["service_health"] if sh["service"] == GUARDIAN_SERVICE)
     assert guardian["state"] == "OFFLINE"
     assert body["market_regime"] is None  # no KOSPI candles persisted yet on a clean slate
+    assert body["macro_regime"] is None  # no macro snapshot persisted yet on a clean slate
 
 
 async def test_summary_reflects_healthy_guardian_heartbeat() -> None:
@@ -314,6 +319,28 @@ async def test_summary_carries_the_latest_daily_stock_decision() -> None:
     assert body["stock_decision_state"] == "STRONG_BUY"
     assert body["stock_decision_top_symbol"] == "005930"
     assert body["stock_decision_top_symbol_name"] == "삼성전자"
+
+
+@pytest.mark.P38
+async def test_summary_carries_the_latest_macro_snapshot() -> None:
+    observed_at = datetime.now(UTC)
+    reading = MacroReading(
+        sp500_change_pct=-2.0, sox_change_pct=-3.0, vix_level=28.0,
+        oil_change_pct=1.0, usdkrw_change_pct=0.5,
+    )
+    async with session_scope() as session:
+        await persist_macro_snapshot(
+            session, reading, regime=MacroRegime.RISK_OFF,
+            headline="TEST-DASH-MACRO VIX 28.0 (공포 구간)", observed_at=observed_at,
+        )
+        await session.commit()
+
+    async with await _client() as client:
+        response = await client.get("/api/dashboard/summary")
+    body = response.json()
+    assert body["macro_regime"] == "RISK_OFF"
+    assert body["macro_headline"] == "TEST-DASH-MACRO VIX 28.0 (공포 구간)"
+    assert body["macro_observed_at"] is not None
 
 
 async def test_incidents_endpoint_returns_seeded_incident() -> None:

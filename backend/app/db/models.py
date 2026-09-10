@@ -582,3 +582,27 @@ class DailyDecisionRow(Base):
     entry_filters_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class MacroSnapshotRow(Base):
+    """P38: one 08:20 KST premarket macro check
+    (`app/radar/macro_regime.py`) - append-only like `DailyDecisionRow`/
+    `RegimeRelativeStrengthRow`, so a later review can see how the macro
+    regime moved day to day, not just today's latest reading. Every
+    metric column is nullable because one symbol's fetch failing
+    (`scripts/scan_macro.py`'s per-symbol error handling) must not
+    discard the other real readings for the day - a `None` here always
+    means "not fetched," never a fabricated 0."""
+
+    __tablename__ = "macro_snapshots"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    sp500_change_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sox_change_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    vix_level: Mapped[float | None] = mapped_column(Float, nullable=True)
+    oil_change_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    usdkrw_change_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    regime: Mapped[str] = mapped_column(String)
+    headline: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

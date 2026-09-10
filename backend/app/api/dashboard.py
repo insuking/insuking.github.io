@@ -54,6 +54,7 @@ from app.models.domain import (
     RiskState,
     SystemHealth,
 )
+from app.radar.macro_persistence import get_latest_macro_snapshot
 from app.radar.regime import MarketRegime, classify_market_regime
 from app.stock_radar.decision_persistence import get_latest_daily_decision
 from app.supervisor import health_monitor, incident_manager
@@ -183,6 +184,9 @@ class DashboardSummary(BaseModel):
     stock_decision_top_symbol: str | None
     stock_decision_top_symbol_name: str | None
     stock_decision_observed_at: datetime | None
+    macro_regime: str | None
+    macro_headline: str | None
+    macro_observed_at: datetime | None
 
 
 @router.get("/summary", response_model=DashboardSummary)
@@ -230,6 +234,7 @@ async def get_summary() -> DashboardSummary:
         btc_regime = await _latest_regime(session, _UPBIT_BTC_SYMBOL)
 
         stock_decision = await get_latest_daily_decision(session)
+        macro_snapshot = await get_latest_macro_snapshot(session)
 
     return DashboardSummary(
         market_regime=market_regime.regime.value if market_regime is not None else None,
@@ -248,6 +253,9 @@ async def get_summary() -> DashboardSummary:
         stock_decision_top_symbol=stock_decision.top_symbol if stock_decision is not None else None,
         stock_decision_top_symbol_name=stock_decision.top_symbol_name if stock_decision is not None else None,
         stock_decision_observed_at=stock_decision.observed_at if stock_decision is not None else None,
+        macro_regime=macro_snapshot.regime if macro_snapshot is not None else None,
+        macro_headline=macro_snapshot.headline if macro_snapshot is not None else None,
+        macro_observed_at=macro_snapshot.observed_at if macro_snapshot is not None else None,
     )
 
 

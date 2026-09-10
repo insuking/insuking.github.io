@@ -22,6 +22,9 @@ function buildSummary(overrides: Partial<DashboardSummary> = {}): DashboardSumma
     stock_decision_top_symbol: null,
     stock_decision_top_symbol_name: null,
     stock_decision_observed_at: null,
+    macro_regime: null,
+    macro_headline: null,
+    macro_observed_at: null,
     ...overrides,
   };
 }

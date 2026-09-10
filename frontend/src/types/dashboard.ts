@@ -25,6 +25,9 @@ export interface DashboardSummary {
   stock_decision_top_symbol: string | null;
   stock_decision_top_symbol_name: string | null;
   stock_decision_observed_at: string | null;
+  macro_regime: string | null;
+  macro_headline: string | null;
+  macro_observed_at: string | null;
 }
 
 export interface IncidentOut {
