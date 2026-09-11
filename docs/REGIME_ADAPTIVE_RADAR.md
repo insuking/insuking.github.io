@@ -1,4 +1,4 @@
-# Regime-Adaptive Radar (P34-P38)
+# Regime-Adaptive Radar (P34-P40)
 
 This extends the stock radar from "rank candidates by a single score" to
 three additional, independent signals layered on top: how a symbol's
@@ -151,6 +151,46 @@ real-connection tests (P3/P5/P7). Verify against the real endpoint once
 deployed somewhere with open egress (a normal Docker Compose host,
 unlike this sandboxed dev container, typically has this).
 
+## P40 - Stock Radar Walk-Forward Backtest Harness
+
+The stock-radar equivalent of the crypto radar's own backtest harness
+(P10/P24, `app/scan/crypto_backtest.py`) - closes the "the stock radar
+has no backtest harness" half of the KPI gap below.
+`app/stock_radar/backtest.py`'s `backtest_prebreakout_strategy()` replays
+real historical daily candles bar-by-bar through the exact same
+production pipeline `scripts/scan_stocks.py`/`scripts/reconfirm_entries.py`
+use live - `score_prebreakout()` (P23), `confirm_entry()` (P27),
+`compute_heat_score()` (P35, the same hard TOO_LATE gate
+`build_confirmed_recommendations()` applies), and `decide_entry_state()`
+(P36) - never a separate, simplified copy of the scoring logic. At day
+`i`, only `candles[0..i]` are visible; the next trading day's open stands
+in for `confirm_entry()`'s live intraday quote (the earliest, most
+conservative substitute available from daily OHLC alone).
+
+**Not modeled**: stocks have no stateful radar-state machine the way
+crypto's `CryptoRadarStateTracker` provides (confirmed - `app/radar/
+state.py` is never imported anywhere under `app/stock_radar/`), so unlike
+the crypto harness's `STATE_EXIT`, an open stock backtest position only
+ever closes on STOP, TARGET, or END_OF_DATA - this answers "is the entry
+signal good", not "how well would P16/P17's trailing-stop management have
+performed", the same scope boundary the crypto harness already draws.
+
+Runnable via `scripts/backtest_stocks.py` (`BACKTEST_SYMBOLS`,
+`BACKTEST_HISTORY_DAYS` env vars) - real KIS HTTP calls, nothing written
+to the database, prints a report only, same shape as
+`scripts/backtest_crypto.py`.
+
+**What this does NOT yet prove**: the harness's `too_late_excluded_count`/
+`rejected_reconfirm_count`/`no_buy_or_watch_count` are real counts of how
+often each gate fired during a replay - not yet a counterfactual "and
+skipping it was the right call" (that needs simulating the trade that
+*would* have happened had the gate not fired, then comparing outcomes -
+a genuine Bad-Trade/Chase-Avoidance-*Rate*, not just an activity count).
+Wiring this harness's real trade outcomes into `/api/dashboard/
+performance`'s `risk_avoidance` field (replacing its current
+7-day-activity-count stand-in) is the natural next step, once the harness
+itself has been run against enough real history to trust its numbers.
+
 ## Known gaps - explicitly out of scope this pass, not silently skipped
 
 Some pieces the original request asked for still have no real data
@@ -182,12 +222,12 @@ honestly build and test. Listed here rather than faked:
   against would be guessing at a shape, not implementing a working loop.
 - **Bad Trade Avoidance Rate / Chase Avoidance Rate / No-Trade Accuracy
   KPIs**: these require actual historical trade outcomes tracked over
-  time. The crypto radar has a backtest harness (P10); the stock radar
-  does not. Partial, real substitute already in place: `/api/dashboard/
-  performance`'s `risk_avoidance` field reports real counts over the last
-  7 days - how many candidates P35's TOO_LATE gate actually excluded, and
-  how many days P36 actually called NO_TRADE_DAY instead of forcing a
-  pick - shown on the 성과 tab. This is not the requested KPI (no
-  win/loss outcome tracking behind it yet), and is labeled as such in
-  both the API docstring and the UI copy; the real KPI still needs a
-  stock backtest harness built first.
+  time. The stock radar now has a backtest harness (P40, above) - the
+  piece that was genuinely missing before - but the harness itself only
+  reports gate-activity counts (how often TOO_LATE/reconfirm-reject/
+  WATCH-NO_BUY fired), not yet the counterfactual "and that was the right
+  call" comparison a real *rate* KPI needs. `/api/dashboard/performance`'s
+  `risk_avoidance` field still reports the older, simpler real-count
+  stand-in (TOO_LATE exclusions + NO_TRADE_DAY days over the last 7 days
+  from live scans, not backtest replay) - wiring the two together is the
+  next step, not yet done.
