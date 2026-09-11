@@ -163,6 +163,20 @@ class Settings(BaseSettings):
     macro_oil_symbol: str = "CL=F"
     macro_usdkrw_symbol: str = "KRW=X"
 
+    # P43 Android app (PWA -> TWA, docs/ANDROID_APP.md) - `app/main.py`'s
+    # CORS allowlist always includes the local dev origins
+    # (localhost:5173/4173); this adds the public origin the frontend is
+    # actually reached at once one exists (e.g. a Cloudflare Tunnel
+    # hostname), since the TWA and any browser hitting that public URL
+    # both need real cross-origin API access. Comma-separated, empty by
+    # default - deliberately opt-in rather than a wildcard, since this API
+    # serves real account/position data.
+    cors_extra_origins: str = ""
+
+    @property
+    def cors_extra_origins_list(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_extra_origins.split(",") if origin.strip()]
+
 
 @lru_cache
 def get_settings() -> Settings:

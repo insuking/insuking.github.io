@@ -15,7 +15,11 @@ app = FastAPI(title=settings.app_name)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:4173"],
+    # Local dev origins are always allowed; `CORS_EXTRA_ORIGINS` (P43) adds
+    # the public origin the frontend is reached at once one exists (e.g. a
+    # Cloudflare Tunnel hostname for the Android TWA) - see
+    # docs/ANDROID_APP.md.
+    allow_origins=["http://localhost:5173", "http://localhost:4173", *settings.cors_extra_origins_list],
     allow_methods=["*"],
     allow_headers=["*"],
 )
