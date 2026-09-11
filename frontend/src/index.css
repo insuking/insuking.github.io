@@ -1,11 +1,83 @@
+/* Pretendard - the de facto standard Korean UI font across Korean fintech/
+   tech apps (Toss included), self-hosted via the `pretendard` npm package
+   rather than a CDN so the app has no external runtime font dependency.
+   The variable-weight build is a single ~2MB woff2 covering every weight
+   the app uses (400/500/600/700 below), instead of separate per-weight
+   files. */
+@import "pretendard/dist/web/variable/pretendardvariable.css";
+
 :root {
-  color-scheme: light;
+  color-scheme: dark;
+
+  /* P45 "SmartCoin" redesign - a deep-navy dark theme replacing the
+     original Toss-style light theme, per the user's own mockups. One
+     fixed look (no light/dark toggle) - the mockups show a single
+     consistent dark UI, not a light variant. Gain/loss also switched
+     here from the original Korean-market convention (RED = up/gain) to
+     the international/crypto-exchange convention the mockups use
+     (GREEN = up/gain, RED = down/loss) - a deliberate reversal from the
+     prior design note, not an oversight. */
+  --color-bg: #0a0e17;
+  --color-surface: #131722;
+  --color-surface-muted: #1a1f2c;
+
+  --color-text: #eef1f6;
+  --color-text-secondary: #9aa4b7;
+  --color-text-tertiary: #6b7484;
+  --color-border: #232a3a;
+
+  --color-primary: #3b82f6;
+  --color-primary-dark: #2563eb;
+  --color-primary-tint: rgba(59, 130, 246, 0.14);
+
+  --color-gain: #22c55e;
+  --color-gain-tint: rgba(34, 197, 94, 0.14);
+  --color-loss: #ef4444;
+  --color-loss-tint: rgba(239, 68, 68, 0.14);
+
+  --color-danger: #ef4444;
+  --color-danger-tint: rgba(239, 68, 68, 0.14);
+  --color-warn: #f59e0b;
+  --color-warn-tint: rgba(245, 158, 11, 0.14);
+
+  --radius-lg: 20px;
+  --radius-md: 16px;
+  --radius-sm: 10px;
+  --radius-pill: 999px;
+
+  /* Dark-theme cards separate from the page by a subtle border plus a
+     soft black glow (a light-theme ambient shadow reads as a smudge on
+     a dark background, so this leans on `--color-border` for definition
+     and keeps the shadow mostly for the lifted/hover state).
+     `--shadow-primary`/`--shadow-danger` tint the glow with the button's
+     own color (a blue CTA casts a faint blue glow) instead of a neutral
+     black shadow. */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.2), 0 6px 16px rgba(0, 0, 0, 0.24);
+  --shadow-card-hover: 0 4px 10px rgba(0, 0, 0, 0.28), 0 14px 32px rgba(0, 0, 0, 0.36);
+  --shadow-primary: 0 6px 20px rgba(59, 130, 246, 0.35);
+  --shadow-primary-hover: 0 8px 26px rgba(59, 130, 246, 0.45);
+  --shadow-danger: 0 6px 16px rgba(239, 68, 68, 0.28);
+  --shadow-danger-hover: 0 8px 20px rgba(239, 68, 68, 0.36);
+  --ease-standard: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --font-family:
+    "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI",
+    Roboto, "Malgun Gothic", sans-serif;
 }
 
 * {
   box-sizing: border-box;
 }
 
+html {
+  background: var(--color-bg);
+}
+
 body {
   margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-family);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
 }

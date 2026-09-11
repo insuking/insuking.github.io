@@ -17,3 +17,6 @@ dist-ssr/
 
 # OS
 .DS_Store
+
+# Local Redis snapshot (created by `redis-server` when run from this dir during dev/testing)
+dump.rdb

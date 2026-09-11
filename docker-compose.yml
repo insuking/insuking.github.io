@@ -29,6 +29,9 @@ services:
     build:
       context: .
       dockerfile: docker/backend.Dockerfile
+    env_file:
+      - path: ./.env
+        required: false
     environment:
       DATABASE_URL: postgresql+asyncpg://radar:radar@postgres:5432/radar
       REDIS_URL: redis://redis:6379/0
@@ -49,10 +52,68 @@ services:
     build:
       context: .
       dockerfile: docker/frontend.Dockerfile
+      args:
+        # Vite bakes this in at build time - defaults to the existing
+        # local-dev value. Set VITE_API_BASE_URL in .env to the backend's
+        # public origin (e.g. https://api.radar.example.com) once you have
+        # one, then rebuild (`docker compose build frontend`), so a phone
+        # reaching this over the public internet doesn't try to call
+        # "localhost" on itself. See docs/ANDROID_APP.md.
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
     ports:
       - "5173:5173"
     depends_on:
       - backend
+
+  # P32: runs scripts/scheduler.py instead of uvicorn, on the same image as
+  # `backend` (migrations already ran there - see backend's `depends_on:
+  # condition: service_healthy` below) so the crypto/stock scan-and-reconfirm
+  # scripts actually run periodically instead of needing someone to remember
+  # to `docker compose exec backend python scripts/scan_crypto.py` by hand -
+  # see scripts/scheduler.py's own docstring for why that gap is exactly why
+  # recommendations were never appearing in a real deployment.
+  scheduler:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+asyncpg://radar:radar@postgres:5432/radar
+      REDIS_URL: redis://redis:6379/0
+    command: ["python", "scripts/scheduler.py"]
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # P43 Android app (PWA -> TWA, docs/ANDROID_APP.md) - gives the frontend
+  # (and, on a separate public hostname, the backend API) a real public
+  # HTTPS origin without opening a port on this machine's router, which the
+  # TWA's Digital Asset Links verification requires. Opt-in via a Compose
+  # profile - `docker compose up -d` (the existing daily workflow) never
+  # starts this; only `docker compose --profile android up -d` does. Needs
+  # `CLOUDFLARE_TUNNEL_TOKEN` in `.env` (see docs/ANDROID_APP.md for how to
+  # create the tunnel and get a token) - the public hostname -> local
+  # service mapping (e.g. radar.example.com -> frontend:5173,
+  # api.radar.example.com -> backend:8000) is configured once in the
+  # Cloudflare Zero Trust dashboard for that tunnel, not in this file.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel run
+    environment:
+      # Left as a plain optional substitution (not `:?required`) -
+      # interpolation runs for every service before Compose filters by
+      # profile, so a required var here would break the default
+      # `docker compose up -d` workflow even when this service never
+      # starts. `cloudflared` itself fails fast with a clear error if this
+      # is empty when the `android` profile is actually used.
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      - frontend
+      - backend
+    profiles:
+      - android
 
 volumes:
   radar_postgres_data:

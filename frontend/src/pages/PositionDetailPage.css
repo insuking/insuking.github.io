@@ -1,0 +1,54 @@
+.position-detail__progress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.position-detail__step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  opacity: 0.4;
+}
+
+.position-detail__step--reached {
+  opacity: 1;
+}
+
+.position-detail__step-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-border);
+}
+
+.position-detail__step--reached .position-detail__step-dot {
+  background: var(--color-primary);
+}
+
+.position-detail__step-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
+.position-detail__step--reached .position-detail__step-label {
+  color: var(--color-text-primary);
+}
+
+.secondary-button {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-weight: 700;
+}
+
+.secondary-button:disabled {
+  opacity: 0.5;
+}
