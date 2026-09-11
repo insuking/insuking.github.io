@@ -30,7 +30,30 @@ const STATUS_LABEL: Record<SafetyCheckItem["status"], string> = {
  * button flip - the whole point of that default-off switch is that it
  * takes a deliberate infrastructure change, not an in-app tap, to ever
  * risk real money.
+ *
+ * The "안전하게 시작하기" button only requires `_BLOCKING_KEYS` to be
+ * "ok" (P46 fix) - not every item. `exchange_connection` and
+ * `daily_loss_limit` are real operational status, not danger signals:
+ * a fresh deployment with no broker keys configured yet, or one whose
+ * scheduler hasn't run its first cycle yet, would otherwise show a
+ * permanent "확인 필요" on those two and never let anyone past this
+ * screen at all - even though this screen has no effect on
+ * `LIVE_TRADING` either way. `demo_mode` (don't silently run live
+ * without the user seeing the LIVE banner) and `kill_switch` (the risk-
+ * state storage every other safety mechanism in this project reads/
+ * writes must actually be reachable) are the two items that genuinely
+ * mean something is unsafe if not "ok", so those are what gate entry -
+ * every item still renders with its real status, never hidden.
  */
+const _BLOCKING_KEYS = ["demo_mode", "kill_switch"] as const;
+
+function _isBlockingOk(check: SafetyCheck | null): boolean {
+  if (check === null) return false;
+  return _BLOCKING_KEYS.every(
+    (key) => check.items.find((item) => item.key === key)?.status === "ok",
+  );
+}
+
 export function SafetyCheckPage({ onContinue }: SafetyCheckPageProps) {
   const [check, setCheck] = useState<SafetyCheck | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -121,7 +144,7 @@ export function SafetyCheckPage({ onContinue }: SafetyCheckPageProps) {
         ))}
       </section>
 
-      <button type="button" className="cta safety-start-cta" disabled={!check?.all_ok} onClick={onContinue}>
+      <button type="button" className="cta safety-start-cta" disabled={!_isBlockingOk(check)} onClick={onContinue}>
         안전하게 시작하기
       </button>
       <button type="button" className="safety-live-toggle" disabled>

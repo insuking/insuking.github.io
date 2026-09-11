@@ -68,6 +68,21 @@ setting (`.env`/`docker-compose.yml`), never something a UI button can
 flip, so accidentally enabling real trading always takes a deliberate
 infrastructure change.
 
+**P46 fix: "안전하게 시작하기" only requires items 1 and 5 to be `ok`**,
+not all five. It originally required `all_ok` (every item), which meant
+a fresh/local deployment with no KIS/Upbit keys configured yet, or one
+without outbound internet reach to Upbit - the common case on a first
+`docker compose up` - would show a permanent "확인 필요" on item 2
+(거래소 연결 정상) and sometimes item 4 (no risk state recorded until the
+scheduler's first cycle), and the start button would never enable at
+all. Those two are real operational status, not danger signals, and this
+screen has no effect on `LIVE_TRADING` either way - so they still render
+their real status honestly, they just don't block entry. Items 1 (don't
+silently run live without seeing the LIVE banner) and 5 (the risk-state
+storage every safety mechanism in this project depends on must actually
+be reachable) are what genuinely mean something is unsafe, so those are
+what gate the button.
+
 ### New capability: manual emergency stop
 
 The home screen's red "긴급정지" button calls `POST
