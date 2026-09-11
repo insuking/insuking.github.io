@@ -1,10 +1,19 @@
-import { useState } from "react";
-import { fetchDashboardSummary, fetchKakaoLoginUrl, fetchPendingApprovals } from "../api/client";
+import { useEffect, useState } from "react";
+import {
+  activateEmergencyStop,
+  fetchBalance,
+  fetchBalanceHistory,
+  fetchDashboardSummary,
+  fetchKakaoLoginUrl,
+  fetchPendingApprovals,
+} from "../api/client";
 import { RecommendationCard } from "../components/RecommendationCard";
 import type { DashboardSummary } from "../types/dashboard";
+import type { Balance, BalanceHistory } from "../types/account";
 import type { PendingApproval } from "../types/approval";
 import { currentUserId } from "../auth";
 import { usePolledFetch } from "../hooks/usePolledFetch";
+import "./HomePage.css";
 
 const HEALTH_LABEL: Record<string, string> = {
   HEALTHY: "정상",
@@ -20,20 +29,44 @@ const ASSET_LABEL: Record<string, string> = {
   CRYPTO: "코인",
 };
 
+const STATE_LABEL: Record<string, string> = {
+  OPEN: "진입",
+  T1_FILLED: "T1 체결",
+  T2_FILLED: "T2 체결",
+  RUNNER: "러너",
+  CLOSED: "종료",
+};
+
 const SUMMARY_POLL_MS = 30_000;
+const BALANCE_POLL_MS = 30_000;
+const HISTORY_WINDOWS = ["1d", "1w", "1m", "all"] as const;
+
+const numberFormatter = new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 0 });
+
+function buildSparklinePoints(values: number[], width: number, height: number): string {
+  if (values.length < 2) return "";
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  return values
+    .map((v, i) => {
+      const x = (i / (values.length - 1)) * width;
+      const y = height - ((v - min) / range) * height;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+}
 
 /**
- * Radar tab / home screen (P21, extended in P42) - docs/MASTER_SPEC.md UX
- * PRINCIPLES: within five seconds the reader must be able to answer "is
- * the market safe right now? is there a recommendation? does something
- * need approval? are open positions safe? how much of today's risk budget
- * is left?" - one fetch (`/api/dashboard/summary`) backs every widget
- * below so there's no waterfall of requests delaying that answer. That
- * fetch now also auto-refreshes every 30s and exposes a retry button on
- * failure (P42 items 2/5). "지금 확인" (P42 item 1) reveals the real
- * pending-approval list inline via the read-only `/api/approvals` list -
- * it never lets you decide from here, since only the Kakao-delivered
- * token can still do that (see backend/app/api/approvals.py's docstring).
+ * Radar tab / home screen (P21, extended in P42/P45) - docs/MASTER_SPEC.md
+ * UX PRINCIPLES: within five seconds the reader must be able to answer
+ * "is the market safe right now? is there a recommendation? does
+ * something need approval? are open positions safe? how much of today's
+ * risk budget is left?" P45 adds the real combined total-assets figure
+ * and its trend chart (`/api/dashboard/balance`, its own poll - separate
+ * from `/summary` since it hits real KIS/Upbit account APIs per request,
+ * same reasoning as `/positions/live-prices`), and a 긴급정지 button
+ * wired to the real manual kill-switch endpoint.
  */
 export function HomePage() {
   const userId = currentUserId();
@@ -42,10 +75,29 @@ export function HomePage() {
     error: loadError,
     refetch,
   } = usePolledFetch<DashboardSummary>(fetchDashboardSummary, SUMMARY_POLL_MS);
+  const { data: balance } = usePolledFetch<Balance>(fetchBalance, BALANCE_POLL_MS);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingApproval[] | null>(null);
   const [pendingLoading, setPendingLoading] = useState(false);
   const [pendingError, setPendingError] = useState(false);
+  const [historyWindow, setHistoryWindow] = useState<(typeof HISTORY_WINDOWS)[number]>("1d");
+  const [history, setHistory] = useState<BalanceHistory | null>(null);
+  const [emergencyBusy, setEmergencyBusy] = useState(false);
+  const [emergencyMessage, setEmergencyMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchBalanceHistory("1d")
+      .then((result) => {
+        if (!cancelled) setHistory(result);
+      })
+      .catch(() => {
+        if (!cancelled) setHistory(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleKakaoLogin() {
     setLoginError(null);
@@ -71,17 +123,63 @@ export function HomePage() {
     }
   }
 
+  async function handleHistoryWindowChange(window: (typeof HISTORY_WINDOWS)[number]) {
+    setHistoryWindow(window);
+    try {
+      const result = await fetchBalanceHistory(window);
+      setHistory(result);
+    } catch {
+      setHistory(null);
+    }
+  }
+
+  async function handleEmergencyStop() {
+    if (!userId) {
+      setEmergencyMessage("카카오 로그인 후 긴급정지를 사용할 수 있습니다.");
+      return;
+    }
+    setEmergencyBusy(true);
+    setEmergencyMessage(null);
+    try {
+      await activateEmergencyStop(userId);
+      setEmergencyMessage("긴급정지가 활성화되었습니다. 새로운 거래가 차단됩니다.");
+      refetch();
+    } catch {
+      setEmergencyMessage("긴급정지 요청에 실패했습니다. 다시 시도해주세요.");
+    } finally {
+      setEmergencyBusy(false);
+    }
+  }
+
   const healthState = summary?.overall_health ?? null;
   const healthy = healthState === "HEALTHY";
+  const killSwitchActive = summary?.risk_used?.kill_switch_active ?? false;
+  const remainingLossLimit =
+    summary?.risk_used != null ? Math.max(0, summary.risk_used.daily_loss_limit - summary.risk_used.daily_loss) : null;
+
+  const sparkline = history && history.snapshots.length >= 2
+    ? buildSparklinePoints(history.snapshots.map((s) => s.total_assets), 280, 60)
+    : null;
 
   return (
     <main className="page">
       <header className="app-header">
         <h1>Multi Asset Radar</h1>
-        <span className={`status-badge status-${healthy ? "ok" : "warn"}`}>
-          SYSTEM ● {healthState ? HEALTH_LABEL[healthState] ?? healthState : "확인 중"}
-        </span>
+        <div className="home-header-actions">
+          <span className={`status-badge status-${healthy ? "ok" : "warn"}`}>
+            시스템 ● {healthState ? HEALTH_LABEL[healthState] ?? healthState : "확인 중"}
+          </span>
+          <button
+            type="button"
+            className={`emergency-stop-button${killSwitchActive ? " emergency-stop-button--active" : ""}`}
+            onClick={handleEmergencyStop}
+            disabled={emergencyBusy}
+          >
+            {killSwitchActive ? "긴급정지 작동중" : "긴급정지"}
+          </button>
+        </div>
       </header>
+      {emergencyMessage && <p className="muted small">{emergencyMessage}</p>}
 
       {!userId && (
         <section className="card">
@@ -94,15 +192,60 @@ export function HomePage() {
         </section>
       )}
 
+      <div className="stat-grid">
+        <div className="stat-card">
+          <span className="stat-card__label">총자산</span>
+          <span className="stat-card__value">
+            {balance ? `${numberFormatter.format(balance.total_assets)}` : "—"}
+          </span>
+        </div>
+        <div className="stat-card">
+          <span className="stat-card__label">오늘 손실</span>
+          <span className="stat-card__value stat-card__value--loss">
+            {summary?.risk_used ? numberFormatter.format(summary.risk_used.daily_loss) : "—"}
+          </span>
+        </div>
+        <div className="stat-card">
+          <span className="stat-card__label">남은 손실한도</span>
+          <span className="stat-card__value">{remainingLossLimit != null ? numberFormatter.format(remainingLossLimit) : "—"}</span>
+        </div>
+        <div className="stat-card">
+          <span className="stat-card__label">승인 대기</span>
+          <span className="stat-card__value">{summary?.pending_approvals ?? "—"}</span>
+        </div>
+        <div className="stat-card">
+          <span className="stat-card__label">보유 포지션</span>
+          <span className="stat-card__value">{summary?.positions.length ?? "—"}</span>
+        </div>
+      </div>
+
       <section className="card">
-        <div className="card-row">
-          <span>국내시장</span>
-          <span className="muted">{summary?.market_regime ?? "데이터 대기"}</span>
+        <div className="card-row" style={{ padding: 0, marginBottom: 10 }}>
+          <p className="card-title" style={{ margin: 0 }}>
+            자산 추이
+          </p>
+          <div className="history-window-tabs">
+            {HISTORY_WINDOWS.map((w) => (
+              <button
+                key={w}
+                type="button"
+                className={`history-window-tab${historyWindow === w ? " history-window-tab--active" : ""}`}
+                onClick={() => handleHistoryWindowChange(w)}
+              >
+                {w.toUpperCase()}
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="card-row">
-          <span>BTC</span>
-          <span className="muted">{summary?.btc_regime ?? "데이터 대기"}</span>
-        </div>
+        {sparkline ? (
+          <svg viewBox="0 0 280 60" className="sparkline" preserveAspectRatio="none">
+            <polyline points={sparkline} fill="none" stroke="var(--color-gain)" strokeWidth="2" />
+          </svg>
+        ) : (
+          <p className="muted small">
+            아직 자산 추이 데이터가 충분하지 않습니다. 스케줄러가 실행되면 자동으로 쌓입니다.
+          </p>
+        )}
       </section>
 
       <section className="card">
@@ -138,24 +281,18 @@ export function HomePage() {
         )}
       </section>
 
-      <section className="card">
-        <p className="card-title">보유종목 {summary?.positions.length ?? 0}</p>
-        {summary?.risk_used ? (
-          <>
-            <p className="muted">
-              오늘 손실 {Math.round(summary.risk_used.daily_loss).toLocaleString("ko-KR")} /{" "}
-              {Math.round(summary.risk_used.daily_loss_limit).toLocaleString("ko-KR")}
-            </p>
-            <p className="muted">
-              위험사용{" "}
-              {((summary.risk_used.exposure / summary.risk_used.exposure_limit) * 100).toFixed(1)}%
-              {summary.risk_used.kill_switch_active && " · 킬스위치 작동중"}
-            </p>
-          </>
-        ) : (
-          <p className="muted">위험 데이터 대기</p>
-        )}
-      </section>
+      {summary && summary.positions.length > 0 && (
+        <section className="card">
+          <p className="card-title">보유 포지션 {summary.positions.length}건</p>
+          {summary.positions.map((position) => (
+            <div className="card-row" key={position.id}>
+              <span>{position.symbol}</span>
+              <span className="muted">{STATE_LABEL[position.state] ?? position.state}</span>
+            </div>
+          ))}
+          <p className="muted small">실시간 손익은 포지션 탭에서 확인할 수 있습니다.</p>
+        </section>
+      )}
 
       <section>
         <p className="card-title">TOP 추천</p>

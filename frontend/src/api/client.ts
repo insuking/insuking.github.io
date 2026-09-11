@@ -1,3 +1,4 @@
+import type { Balance, BalanceHistory, EmergencyStopResult, SafetyCheck } from "../types/account";
 import type { CallbackResponse, LoginUrlResponse } from "../types/auth";
 import type {
   ApprovalDecisionType,
@@ -125,6 +126,52 @@ export async function fetchStockRadarLatest(): Promise<StockRadarLatest> {
     throw new ApprovalApiError(response.status, await _readDetail(response));
   }
   return (await response.json()) as StockRadarLatest;
+}
+
+export async function fetchBalance(): Promise<Balance> {
+  const response = await fetch(`${API_BASE_URL}/api/dashboard/balance`);
+  if (!response.ok) {
+    throw new ApprovalApiError(response.status, await _readDetail(response));
+  }
+  return (await response.json()) as Balance;
+}
+
+export async function fetchBalanceHistory(window: string): Promise<BalanceHistory> {
+  const response = await fetch(`${API_BASE_URL}/api/dashboard/balance/history?window=${window}`);
+  if (!response.ok) {
+    throw new ApprovalApiError(response.status, await _readDetail(response));
+  }
+  return (await response.json()) as BalanceHistory;
+}
+
+export async function fetchSafetyCheck(): Promise<SafetyCheck> {
+  const response = await fetch(`${API_BASE_URL}/api/dashboard/safety-check`);
+  if (!response.ok) {
+    throw new ApprovalApiError(response.status, await _readDetail(response));
+  }
+  return (await response.json()) as SafetyCheck;
+}
+
+export async function activateEmergencyStop(userId: string): Promise<EmergencyStopResult> {
+  const response = await fetch(`${API_BASE_URL}/api/dashboard/emergency-stop`, {
+    method: "POST",
+    headers: { "X-User-Id": userId },
+  });
+  if (!response.ok) {
+    throw new ApprovalApiError(response.status, await _readDetail(response));
+  }
+  return (await response.json()) as EmergencyStopResult;
+}
+
+export async function clearEmergencyStop(userId: string): Promise<EmergencyStopResult> {
+  const response = await fetch(`${API_BASE_URL}/api/dashboard/emergency-stop/clear`, {
+    method: "POST",
+    headers: { "X-User-Id": userId },
+  });
+  if (!response.ok) {
+    throw new ApprovalApiError(response.status, await _readDetail(response));
+  }
+  return (await response.json()) as EmergencyStopResult;
 }
 
 export async function fetchKakaoLoginUrl(): Promise<LoginUrlResponse> {

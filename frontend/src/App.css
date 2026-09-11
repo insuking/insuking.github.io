@@ -49,22 +49,24 @@
 
 .status-ok {
   background: var(--color-primary-tint);
-  color: var(--color-primary-dark);
+  color: var(--color-primary);
 }
 
 .status-warn {
   background: var(--color-warn-tint);
-  color: #b06400;
+  color: var(--color-warn);
 }
 
 .card {
   background: var(--color-surface);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   padding: 18px 20px;
   box-shadow: var(--shadow-card);
   transition:
     box-shadow 0.2s var(--ease-standard),
-    transform 0.2s var(--ease-standard);
+    transform 0.2s var(--ease-standard),
+    border-color 0.2s var(--ease-standard);
 }
 
 /* `hover: hover` excludes touchscreens, where a tap leaves :hover "stuck"
@@ -173,7 +175,7 @@
 .filter-chip--active {
   border-color: var(--color-primary);
   background: var(--color-primary-tint);
-  color: var(--color-primary-dark);
+  color: var(--color-primary);
 }
 
 .pnl-gain {
