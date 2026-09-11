@@ -54,11 +54,28 @@ under a single `output` array, not `output1`/`output2`) and returns
 program-trading (프로그램) flow nowhere in its fields - see
 `app/stock_radar/investor_flow.py` for why that's a documented, not
 silent, gap.
+
+`get_account_balance()` (P45) is 주식잔고조회
+(`/uapi/domestic-stock/v1/trading/inquire-balance`, tr_id `TTTC8434R`
+real / `VTTC8434R` paper - same real/paper split as `orders.py`'s
+`_TR_ID_BUY`/etc, confirmed from the same public sample repo's
+`examples_llm/domestic_stock/inquire_balance/inquire_balance.py` plus its
+companion `chk_inquire_balance.py`, which gave the full `output1`
+(per-holding rows)/`output2` (account-summary row) column-name mapping
+used below. Only `output2`'s summary row is read here - `dnca_tot_amt`
+(예수금총금액/cash), `scts_evlu_amt`(유가평가금액/securities value),
+`tot_evlu_amt`(총평가금액/total assets = cash + securities at current
+price) - this project has no use yet for `output1`'s per-holding detail
+since `app/api/dashboard.py`'s own `/positions/live-prices` (P42) already
+gets per-symbol current price straight from `get_quote()`. Like
+`get_daily_prices()`/`get_investor_trend()`, not yet confirmed against a
+live response from this project's own credentials.
 """
 
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -72,6 +89,14 @@ _TR_ID_CURRENT_PRICE = "FHKST01010100"
 _TR_ID_DAILY_CHART_PRICE = "FHKST03010100"
 _TR_ID_DAILY_INDEX_CHART_PRICE = "FHKUP03500100"
 _TR_ID_INVESTOR_TREND = "FHKST01010900"
+_TR_ID_BALANCE = {"real": "TTTC8434R", "paper": "VTTC8434R"}
+
+
+@dataclass
+class AccountBalance:
+    cash: float
+    securities_value: float
+    total_value: float
 
 _RATE_LIMIT_MSG_CD = "EGW00201"
 DEFAULT_MAX_REQUESTS_PER_SECOND = 2.0
@@ -210,6 +235,38 @@ class KisRestClient:
         bars = [self._to_investor_flow_bar(row) for row in rows if row.get("stck_bsop_date")]
         bars.sort(key=lambda b: b.date)
         return bars
+
+    async def get_account_balance(self, cano: str, acnt_prdt_cd: str, paper_trading: bool = True) -> AccountBalance:
+        """Real cash/securities/total-asset value for the account
+        (`cano`/`acnt_prdt_cd` - see `Settings.kis_cano`/`kis_acnt_prdt_cd`)
+        - see module docstring for field provenance. `output2` is a
+        one-row account summary (unlike `output1`'s per-holding list, not
+        read here); an empty/missing row degrades to all-zero rather than
+        raising, matching this endpoint's own "no holdings yet" case."""
+        body = await self._get(
+            "/uapi/domestic-stock/v1/trading/inquire-balance",
+            _TR_ID_BALANCE["paper" if paper_trading else "real"],
+            {
+                "CANO": cano,
+                "ACNT_PRDT_CD": acnt_prdt_cd,
+                "AFHR_FLPR_YN": "N",
+                "OFL_YN": "",
+                "INQR_DVSN": "02",
+                "UNPR_DVSN": "01",
+                "FUND_STTL_ICLD_YN": "N",
+                "FNCG_AMT_AUTO_RDPT_YN": "N",
+                "PRCS_DVSN": "00",
+                "CTX_AREA_FK100": "",
+                "CTX_AREA_NK100": "",
+            },
+        )
+        summary_rows = body.get("output2") or [{}]
+        row = summary_rows[0]
+        return AccountBalance(
+            cash=float(row.get("dnca_tot_amt") or 0),
+            securities_value=float(row.get("scts_evlu_amt") or 0),
+            total_value=float(row.get("tot_evlu_amt") or 0),
+        )
 
     async def _throttle(self) -> None:
         """Pace outgoing requests to at most `max_requests_per_second`,

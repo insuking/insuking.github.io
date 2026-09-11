@@ -30,7 +30,10 @@ for no reason, and `reconfirm_entries.py`'s own docstring already warns
 that confirming outside trading hours proves nothing. Both scripts
 already no-op cleanly with a printed message when `KIS_APP_KEY`/
 `KIS_APP_SECRET` aren't set (see their own `run()`), so this loop is
-safe to start even before KIS credentials are configured.
+safe to start even before KIS credentials are configured. The P45
+balance snapshot also runs every cycle alongside the crypto scan (real
+account balances move any time, not just during KRX hours) - see
+`scripts/snapshot_balance.py`'s own docstring.
 
 **Failure handling**: each script's `run()` is wrapped in `_run_safely()`
 - an exception from one cycle (a transient KIS/Upbit error, a DB hiccup)
@@ -57,7 +60,7 @@ from datetime import UTC, date, datetime, time
 sys.path.insert(0, ".")
 
 from app.scheduler.market_hours import KST, is_krx_trading_hours
-from scripts import reconfirm_entries, scan_crypto, scan_macro, scan_stocks
+from scripts import reconfirm_entries, scan_crypto, scan_macro, scan_stocks, snapshot_balance
 
 _CRYPTO_INTERVAL_SECONDS = int(os.environ.get("SCHEDULER_CRYPTO_INTERVAL_SECONDS", "300"))
 _STOCK_INTERVAL_SECONDS = int(os.environ.get("SCHEDULER_STOCK_INTERVAL_SECONDS", "1800"))
@@ -89,6 +92,7 @@ async def run_cycle(
     scan/reconfirm coroutines.
     """
     await _run_safely("crypto scan", scan_crypto.run())
+    await _run_safely("balance snapshot", snapshot_balance.run())
 
     should_run_stock = is_krx_trading_hours(now) and (
         seconds_since_last_stock_run is None or seconds_since_last_stock_run >= _STOCK_INTERVAL_SECONDS

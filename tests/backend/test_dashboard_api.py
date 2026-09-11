@@ -9,10 +9,14 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
+import app.api.dashboard as dashboard_api
+from app.account.balance import CombinedBalance
+from app.account.persistence import persist_balance_snapshot
 from app.core.config import get_settings
 from app.db.models import (
+    AccountBalanceSnapshotRow,
     Approval,
     Candle,
     DailyDecisionRow,
@@ -34,6 +38,7 @@ from app.db.models import Recommendation as RecommendationRow
 from app.db.session import session_scope
 from app.guardian.health import SERVICE_NAME as GUARDIAN_SERVICE
 from app.guardian.health import record_heartbeat
+from app.integrations.kis.rest_client import KisRestClient
 from app.integrations.upbit.errors import UpbitApiError
 from app.integrations.upbit.rest_client import UpbitRestClient
 from app.main import app
@@ -49,6 +54,7 @@ pytestmark = [pytest.mark.P21, pytest.mark.asyncio]
 
 _SYMBOL = "DASH-TEST-SYM"
 _PAPER_ACCOUNT_ID = "test-dashboard-paper-account"
+_EMERGENCY_TEST_USER = "test-dashboard-emergency-user"
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -74,6 +80,30 @@ async def _cleanup():  # type: ignore[no-untyped-def]
         await session.execute(delete(PaperOrder).where(PaperOrder.id.like("dash-paper-order-%")))
         await session.execute(delete(PaperPosition).where(PaperPosition.account_id == _PAPER_ACCOUNT_ID))
         await session.execute(delete(PaperAccount).where(PaperAccount.id == _PAPER_ACCOUNT_ID))
+        await session.execute(
+            delete(RiskStateRow).where(RiskStateRow.kill_switch_reason.like(f"%{_EMERGENCY_TEST_USER}%"))
+        )
+        await session.execute(delete(AccountBalanceSnapshotRow).where(AccountBalanceSnapshotRow.total_assets.in_([111.0, 222.0, 333.0])))
+        await session.execute(delete(KakaoAccount).where(KakaoAccount.user_id == _EMERGENCY_TEST_USER))
+        await session.commit()
+
+
+async def _seed_valid_kakao_session(user_id: str) -> None:
+    now = datetime.now(UTC)
+    async with session_scope() as session:
+        session.add(
+            KakaoAccount(
+                id=f"kakao-{user_id}",
+                user_id=user_id,
+                kakao_user_id=f"kakao-uid-{user_id}",
+                access_token="valid-access-token",
+                refresh_token="valid-refresh-token",
+                access_expires_at=now + timedelta(hours=6),
+                refresh_expires_at=now + timedelta(days=60),
+                created_at=now,
+                updated_at=now,
+            )
+        )
         await session.commit()
 
 
@@ -591,3 +621,243 @@ async def test_positions_live_prices_returns_none_for_a_stock_position_when_kis_
 
     entry = next(p for p in response.json()["prices"] if p["symbol"] == _SYMBOL)
     assert entry["current_price"] is None
+
+
+@pytest.mark.P45
+async def test_balance_returns_the_real_combined_total(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _fake_fetch_combined_balance(settings: object) -> CombinedBalance:
+        return CombinedBalance(kis_total_value=1_000_000.0, upbit_total_value=500_000.0)
+
+    monkeypatch.setattr(dashboard_api, "fetch_combined_balance", _fake_fetch_combined_balance)
+
+    async with await _client() as client:
+        response = await client.get("/api/dashboard/balance")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["kis_total_value"] == 1_000_000.0
+    assert body["upbit_total_value"] == 500_000.0
+    assert body["total_assets"] == 1_500_000.0
+
+
+@pytest.mark.P45
+async def test_balance_history_returns_real_snapshots_within_the_requested_window() -> None:
+    now = datetime.now(UTC)
+    async with session_scope() as session:
+        await persist_balance_snapshot(session, CombinedBalance(50.0, 61.0), now - timedelta(days=10))  # 111.0
+        await persist_balance_snapshot(session, CombinedBalance(100.0, 122.0), now - timedelta(hours=12))  # 222.0
+        await persist_balance_snapshot(session, CombinedBalance(150.0, 183.0), now - timedelta(minutes=5))  # 333.0
+        await session.commit()
+
+    async with await _client() as client:
+        response = await client.get("/api/dashboard/balance/history", params={"window": "1d"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["window"] == "1d"
+    totals = [s["total_assets"] for s in body["snapshots"]]
+    assert 111.0 not in totals  # 10 days ago - outside the 1d window
+    assert totals == [222.0, 333.0]  # chronological (oldest first), 10-day-old snapshot excluded
+
+
+@pytest.mark.P45
+async def test_balance_history_all_window_includes_everything() -> None:
+    now = datetime.now(UTC)
+    async with session_scope() as session:
+        await persist_balance_snapshot(session, CombinedBalance(50.0, 61.0), now - timedelta(days=10))
+        await session.commit()
+
+    async with await _client() as client:
+        response = await client.get("/api/dashboard/balance/history", params={"window": "all"})
+
+    totals = [s["total_assets"] for s in response.json()["snapshots"]]
+    assert 111.0 in totals
+
+
+@pytest.mark.P45
+async def test_emergency_stop_requires_authentication() -> None:
+    async with await _client() as client:
+        response = await client.post(
+            "/api/dashboard/emergency-stop", headers={"X-User-Id": _EMERGENCY_TEST_USER}
+        )
+
+    assert response.status_code == 401
+
+
+@pytest.mark.P45
+async def test_emergency_stop_activates_the_kill_switch_immediately() -> None:
+    await _seed_valid_kakao_session(_EMERGENCY_TEST_USER)
+
+    async with await _client() as client:
+        response = await client.post(
+            "/api/dashboard/emergency-stop", headers={"X-User-Id": _EMERGENCY_TEST_USER}
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["kill_switch_active"] is True
+    assert _EMERGENCY_TEST_USER in body["kill_switch_reason"]
+
+    async with session_scope() as session:
+        result = await session.execute(select(RiskStateRow).order_by(RiskStateRow.as_of.desc()).limit(1))
+        latest = result.scalar_one()
+    assert latest.kill_switch_active is True
+
+
+@pytest.mark.P45
+async def test_emergency_stop_clear_deactivates_the_kill_switch() -> None:
+    await _seed_valid_kakao_session(_EMERGENCY_TEST_USER)
+
+    async with await _client() as client:
+        await client.post("/api/dashboard/emergency-stop", headers={"X-User-Id": _EMERGENCY_TEST_USER})
+        response = await client.post(
+            "/api/dashboard/emergency-stop/clear", headers={"X-User-Id": _EMERGENCY_TEST_USER}
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["kill_switch_active"] is False
+    assert _EMERGENCY_TEST_USER in body["kill_switch_reason"]
+
+
+@pytest.mark.P45
+async def test_emergency_stop_preserves_real_risk_numbers_from_the_previous_state() -> None:
+    await _seed_valid_kakao_session(_EMERGENCY_TEST_USER)
+    now = datetime.now(UTC)
+    async with session_scope() as session:
+        session.add(
+            RiskStateRow(
+                as_of=now,
+                daily_loss=12_345.0,
+                daily_loss_limit=100_000.0,
+                exposure=50_000.0,
+                exposure_limit=200_000.0,
+                open_positions=2,
+                max_positions=5,
+                consecutive_stops=1,
+                kill_switch_active=False,
+                kill_switch_reason=None,
+            )
+        )
+        await session.commit()
+
+    async with await _client() as client:
+        await client.post("/api/dashboard/emergency-stop", headers={"X-User-Id": _EMERGENCY_TEST_USER})
+
+    async with session_scope() as session:
+        result = await session.execute(select(RiskStateRow).order_by(RiskStateRow.as_of.desc()).limit(1))
+        latest = result.scalar_one()
+    assert latest.daily_loss == 12_345.0
+    assert latest.exposure == 50_000.0
+    assert latest.kill_switch_active is True
+
+
+@pytest.mark.P45
+async def test_safety_check_reports_demo_mode_when_live_trading_is_off() -> None:
+    settings = get_settings()
+    assert settings.live_trading is False  # the project's safe default
+
+    async with await _client() as client:
+        response = await client.get("/api/dashboard/safety-check")
+
+    body = response.json()
+    demo_item = next(item for item in body["items"] if item["key"] == "demo_mode")
+    assert demo_item["status"] == "ok"
+    assert demo_item["label"] == "Demo 모드"
+
+
+@pytest.mark.P45
+async def test_safety_check_withdrawal_item_is_always_ok() -> None:
+    async with await _client() as client:
+        response = await client.get("/api/dashboard/safety-check")
+
+    withdrawal_item = next(item for item in response.json()["items"] if item["key"] == "withdrawal_disabled")
+    assert withdrawal_item["status"] == "ok"
+
+
+@pytest.mark.P45
+async def test_safety_check_exchange_connection_ok_when_upbit_reachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _fake_get_ticker_price(self: UpbitRestClient, market: str) -> float:
+        return 90_000_000.0
+
+    monkeypatch.setattr(UpbitRestClient, "get_ticker_price", _fake_get_ticker_price)
+
+    async with await _client() as client:
+        response = await client.get("/api/dashboard/safety-check")
+
+    connection_item = next(item for item in response.json()["items"] if item["key"] == "exchange_connection")
+    assert connection_item["status"] == "ok"
+    assert "Upbit 정상" in connection_item["detail"]
+
+
+@pytest.mark.P45
+async def test_safety_check_exchange_connection_warns_when_upbit_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _boom(self: UpbitRestClient, market: str) -> float:
+        raise UpbitApiError(500, "internal_server_error", "down")
+
+    monkeypatch.setattr(UpbitRestClient, "get_ticker_price", _boom)
+
+    async with await _client() as client:
+        response = await client.get("/api/dashboard/safety-check")
+
+    connection_item = next(item for item in response.json()["items"] if item["key"] == "exchange_connection")
+    assert connection_item["status"] == "warning"
+    assert "연결 실패" in connection_item["detail"]
+
+
+@pytest.mark.P45
+async def test_safety_check_reports_kis_not_configured_without_calling_kis(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _fake_get_ticker_price(self: UpbitRestClient, market: str) -> float:
+        return 90_000_000.0
+
+    async def _fail_if_called(self: KisRestClient, symbol: str, market: object = None) -> object:
+        raise AssertionError("KIS should not be called when not configured")
+
+    monkeypatch.setattr(UpbitRestClient, "get_ticker_price", _fake_get_ticker_price)
+    monkeypatch.setattr(KisRestClient, "get_quote", _fail_if_called)
+
+    settings = get_settings()
+    assert settings.kis_configured is False  # no KIS credentials in this test environment
+
+    async with await _client() as client:
+        response = await client.get("/api/dashboard/safety-check")
+
+    connection_item = next(item for item in response.json()["items"] if item["key"] == "exchange_connection")
+    assert "KIS 미설정" in connection_item["detail"]
+
+
+@pytest.mark.P45
+async def test_safety_check_daily_loss_limit_ok_when_a_recent_risk_state_has_a_configured_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fake_get_ticker_price(self: UpbitRestClient, market: str) -> float:
+        return 90_000_000.0
+
+    monkeypatch.setattr(UpbitRestClient, "get_ticker_price", _fake_get_ticker_price)
+
+    now = datetime.now(UTC)
+    async with session_scope() as session:
+        session.add(
+            RiskStateRow(
+                as_of=now,
+                daily_loss=0.0,
+                daily_loss_limit=999999.0,  # this file's own cleanup sentinel for RiskStateRow test rows
+                exposure=0.0,
+                exposure_limit=1_000_000.0,
+                open_positions=0,
+                max_positions=5,
+                consecutive_stops=0,
+                kill_switch_active=False,
+                kill_switch_reason=None,
+            )
+        )
+        await session.commit()
+
+    async with await _client() as client:
+        response = await client.get("/api/dashboard/safety-check")
+
+    loss_item = next(item for item in response.json()["items"] if item["key"] == "daily_loss_limit")
+    assert loss_item["status"] == "ok"
+    assert "999,999" in loss_item["detail"]

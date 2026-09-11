@@ -122,3 +122,51 @@ async def test_place_order_raises_on_error_response() -> None:
     assert exc_info.value.status_code == 400
     assert exc_info.value.name == "invalid_query"
     assert exc_info.value.message == "bad params"
+
+
+@pytest.mark.P45
+@pytest.mark.asyncio
+async def test_get_accounts_sends_bearer_auth_and_parses_balances() -> None:
+    """`build_headers({})`'s "no query params -> no query_hash claim"
+    behavior is already covered directly at the auth layer
+    (test_upbit_auth.py) - this only checks get_accounts() calls it and
+    parses the real response shape correctly."""
+    seen_requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_requests.append(request)
+        return httpx.Response(
+            200,
+            json=[
+                {"currency": "KRW", "balance": "1000000.0", "locked": "0.0", "avg_buy_price": "0", "unit_currency": "KRW"},
+                {
+                    "currency": "BTC",
+                    "balance": "0.01",
+                    "locked": "0.0",
+                    "avg_buy_price": "50000000",
+                    "unit_currency": "KRW",
+                },
+            ],
+        )
+
+    _client, orders = _client_with(handler)
+    result = await orders.get_accounts()
+
+    request = seen_requests[0]
+    assert request.method == "GET"
+    assert request.url.path == "/v1/accounts"
+    assert request.headers["Authorization"].startswith("Bearer ")
+    assert result[0]["currency"] == "KRW"
+    assert result[1]["balance"] == "0.01"
+
+
+@pytest.mark.P45
+@pytest.mark.asyncio
+async def test_get_accounts_returns_empty_list_for_non_list_response() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"error": "unexpected"})
+
+    _client, orders = _client_with(handler)
+    result = await orders.get_accounts()
+
+    assert result == []

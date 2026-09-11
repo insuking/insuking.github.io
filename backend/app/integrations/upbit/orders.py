@@ -30,6 +30,16 @@ comments acknowledging it doesn't implement one, so this client doesn't
 send one either rather than guessing at an unconfirmed field name. See
 app/integrations/upbit/execution.py for how idempotency is handled without
 it.
+
+`get_accounts()` (P45) is `GET /v1/accounts` (전체 계좌 조회) - same
+authenticated-GET shape as `get_order()`/`list_orders()` above, but with
+no query params at all, so its JWT carries no `query_hash` (see
+`app/integrations/upbit/auth.py`'s own "without params omits query_hash"
+behavior, already covered by that module's tests). Confirmed against
+`sharebook-kr/pyupbit`'s `get_balances()` - returns one row per currency
+held (including `KRW` cash itself), each `{currency, balance, locked,
+avg_buy_price, avg_buy_price_modified, unit_currency}`, `balance`/`locked`
+as decimal strings like every other Upbit numeric field in this project.
 """
 
 from __future__ import annotations
@@ -46,6 +56,12 @@ class UpbitOrderClient:
     def __init__(self, client: httpx.AsyncClient, auth: UpbitAuth) -> None:
         self._client = client
         self._auth = auth
+
+    async def get_accounts(self) -> list[dict[str, Any]]:
+        headers = self._auth.build_headers({})
+        response = await self._client.get("/v1/accounts", headers=headers)
+        result = self._parse(response)
+        return result if isinstance(result, list) else []
 
     async def place_order(
         self,

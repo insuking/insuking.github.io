@@ -384,3 +384,58 @@ async def test_get_investor_trend_raises_on_non_zero_rt_cd() -> None:
 
     with pytest.raises(KisApiError):
         await rest.get_investor_trend("BADCODE")
+
+
+@pytest.mark.asyncio
+async def test_get_account_balance_parses_summary_row_and_uses_paper_tr_id_by_default() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/oauth2/tokenP":
+            return httpx.Response(200, json={"access_token": "test-token", "expires_in": 86400})
+        if request.url.path == "/uapi/domestic-stock/v1/trading/inquire-balance":
+            assert request.headers["tr_id"] == "VTTC8434R"  # paper by default
+            return httpx.Response(
+                200,
+                json={
+                    "rt_cd": "0",
+                    "output1": [],
+                    "output2": [
+                        {"dnca_tot_amt": "1000000", "scts_evlu_amt": "2500000", "tot_evlu_amt": "3500000"}
+                    ],
+                },
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://mock.kis.test")
+    rest = KisRestClient(client, KisAuth(client=client, settings=_settings()))
+
+    balance = await rest.get_account_balance("12345678", "01")
+
+    assert balance.cash == 1_000_000.0
+    assert balance.securities_value == 2_500_000.0
+    assert balance.total_value == 3_500_000.0
+
+    balance_request = next(r for r in requests if "inquire-balance" in str(r.url))
+    assert balance_request.url.params["CANO"] == "12345678"
+    assert balance_request.url.params["ACNT_PRDT_CD"] == "01"
+
+
+@pytest.mark.asyncio
+async def test_get_account_balance_uses_real_tr_id_when_not_paper_trading() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth2/tokenP":
+            return httpx.Response(200, json={"access_token": "test-token", "expires_in": 86400})
+        if request.url.path == "/uapi/domestic-stock/v1/trading/inquire-balance":
+            assert request.headers["tr_id"] == "TTTC8434R"
+            return httpx.Response(200, json={"rt_cd": "0", "output1": [], "output2": []})
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://mock.kis.test")
+    rest = KisRestClient(client, KisAuth(client=client, settings=_settings()))
+
+    balance = await rest.get_account_balance("12345678", "01", paper_trading=False)
+
+    assert balance.cash == 0.0
+    assert balance.total_value == 0.0

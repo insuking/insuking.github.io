@@ -606,3 +606,26 @@ class MacroSnapshotRow(Base):
     regime: Mapped[str] = mapped_column(String)
     headline: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AccountBalanceSnapshotRow(Base):
+    """P45: one periodic real combined-balance reading (KIS + Upbit),
+    append-only like `MacroSnapshotRow`/`RegimeRelativeStrengthRow` - the
+    home screen's "자산 추이" (asset trend) chart reads real history from
+    this table rather than a fabricated curve. `kis_total_value`/
+    `upbit_total_value` are nullable independently - a broker not
+    configured, or one real fetch failing while the other succeeds, must
+    not discard the other broker's real reading (same "partial real data
+    beats no data" rule `MacroSnapshotRow` already documents).
+    `total_assets` sums whichever of the two were actually available this
+    snapshot (0 if neither), so the trend line is always plottable even
+    while one broker is unconfigured."""
+
+    __tablename__ = "account_balance_snapshots"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    kis_total_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    upbit_total_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    total_assets: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

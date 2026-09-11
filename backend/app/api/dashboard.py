@@ -23,11 +23,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.account.balance import fetch_combined_balance
+from app.account.persistence import get_balance_history
+from app.api.approvals import _require_authenticated
+from app.approval.errors import ApprovalNotAuthenticatedError
 from app.approval.service import TERMINAL_STATES
 from app.core.config import get_settings
 from app.db.models import Approval as ApprovalRow
@@ -513,3 +517,289 @@ async def get_positions_live_prices() -> PositionPricesResponse:
                     prices.append(_position_price_out(position, None))
 
     return PositionPricesResponse(prices=prices)
+
+
+class BalanceOut(BaseModel):
+    """P45 - real combined KIS+Upbit account balance. `kis_total_value`/
+    `upbit_total_value` are `None` when that broker isn't configured or
+    the live fetch failed - see `app/account/balance.py`'s own docstring.
+    """
+
+    kis_total_value: float | None
+    upbit_total_value: float | None
+    total_assets: float
+
+
+@router.get("/balance", response_model=BalanceOut)
+async def get_balance() -> BalanceOut:
+    """P45: the home screen's "총자산" card - a real, live-fetched
+    combined balance (not read from `account_balance_snapshots`, which is
+    for the trend chart below). Deliberately its own endpoint, not folded
+    into `/summary`, for the same reason `/positions/live-prices` (P42)
+    is: it makes real external KIS/Upbit calls per request."""
+    settings = get_settings()
+    balance = await fetch_combined_balance(settings)
+    return BalanceOut(
+        kis_total_value=balance.kis_total_value,
+        upbit_total_value=balance.upbit_total_value,
+        total_assets=balance.total_assets,
+    )
+
+
+class BalanceSnapshotOut(BaseModel):
+    as_of: str
+    total_assets: float
+
+
+class BalanceHistoryOut(BaseModel):
+    window: str
+    snapshots: list[BalanceSnapshotOut]
+
+
+_BALANCE_HISTORY_WINDOWS = {"1d": timedelta(days=1), "1w": timedelta(days=7), "1m": timedelta(days=30)}
+
+
+@router.get("/balance/history", response_model=BalanceHistoryOut)
+async def get_balance_history_endpoint(window: str = "1d") -> BalanceHistoryOut:
+    """P45: the home screen's "자산 추이" chart - real periodic snapshots
+    from `scripts/snapshot_balance.py`'s scheduler pass, never a
+    fabricated curve. An empty list on a fresh deployment, or before that
+    script has run even once, is the honest answer (see
+    `app/account/persistence.py`'s own docstring). Unrecognized `window`
+    values fall back to "1d" rather than erroring, matching how a typo'd
+    URL param should degrade for a read-only chart."""
+    now = datetime.now(UTC)
+    since = datetime.min.replace(tzinfo=UTC) if window == "all" else now - _BALANCE_HISTORY_WINDOWS.get(window, _BALANCE_HISTORY_WINDOWS["1d"])
+
+    async with session_scope() as session:
+        rows = await get_balance_history(session, since=since)
+
+    return BalanceHistoryOut(
+        window=window,
+        snapshots=[BalanceSnapshotOut(as_of=row.as_of.isoformat(), total_assets=row.total_assets) for row in rows],
+    )
+
+
+class EmergencyStopOut(BaseModel):
+    kill_switch_active: bool
+    kill_switch_reason: str | None
+
+
+async def _record_manual_kill_switch_state(session: AsyncSession, active: bool, reason: str) -> RiskStateRow:
+    """Inserts a new `RiskStateRow` reusing the latest real risk numbers
+    (daily loss/exposure/etc unchanged) but with `kill_switch_active`
+    forced to `active` - `RiskService.should_block_new_trades()` (P18)
+    already reads "latest row by `as_of`" as current, so this takes
+    effect immediately without a separate kill-switch mechanism to build.
+    A deployment with no risk state recorded yet (fresh install) still
+    gets a real row with honest zeroed numeric fields - `should_block_
+    new_trades()` already treats "no row at all" as "block", so a manual
+    stop before the first scan has even run is still meaningful."""
+    result = await session.execute(select(RiskStateRow).order_by(RiskStateRow.as_of.desc()).limit(1))
+    previous = result.scalar_one_or_none()
+    now = datetime.now(UTC)
+    row = RiskStateRow(
+        as_of=now,
+        daily_loss=previous.daily_loss if previous else 0.0,
+        daily_loss_limit=previous.daily_loss_limit if previous else 0.0,
+        exposure=previous.exposure if previous else 0.0,
+        exposure_limit=previous.exposure_limit if previous else 0.0,
+        open_positions=previous.open_positions if previous else 0,
+        max_positions=previous.max_positions if previous else 0,
+        consecutive_stops=previous.consecutive_stops if previous else 0,
+        kill_switch_active=active,
+        kill_switch_reason=reason,
+    )
+    session.add(row)
+    await session.commit()
+    return row
+
+
+@router.post("/emergency-stop", response_model=EmergencyStopOut)
+async def activate_emergency_stop(x_user_id: str = Header(..., alias="X-User-Id")) -> EmergencyStopOut:
+    """P45: the home screen's red "긴급정지" button - immediately blocks
+    new trades (`RiskService.should_block_new_trades()` reads this
+    straight back) regardless of what the automatic P18 kill-switch
+    evaluation currently says. Kakao-session-gated the same way
+    `app/api/approvals.py`'s endpoints are (`_require_authenticated`,
+    reused directly rather than duplicated) - this stops trades, so it
+    doesn't weaken the "never fully autonomous" rule, but it's still a
+    real action taken in the authenticated user's name and logged as such
+    in `kill_switch_reason`."""
+    async with session_scope() as session:
+        try:
+            await _require_authenticated(session, x_user_id)
+        except ApprovalNotAuthenticatedError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+        row = await _record_manual_kill_switch_state(session, True, f"사용자 수동 긴급정지 ({x_user_id})")
+
+    return EmergencyStopOut(kill_switch_active=row.kill_switch_active, kill_switch_reason=row.kill_switch_reason)
+
+
+@router.post("/emergency-stop/clear", response_model=EmergencyStopOut)
+async def clear_emergency_stop(x_user_id: str = Header(..., alias="X-User-Id")) -> EmergencyStopOut:
+    """P45: reverses `activate_emergency_stop()` - a new risk-state row
+    with `kill_switch_active=False`, same real numeric fields carried
+    forward, same Kakao-session gate. Does not re-evaluate the automatic
+    P18 conditions; the next real scheduler cycle's own evaluation will
+    turn it back on again if those conditions still hold, which is the
+    intended behavior (a manual clear should not silently suppress a
+    real, still-active risk condition past the next real check)."""
+    async with session_scope() as session:
+        try:
+            await _require_authenticated(session, x_user_id)
+        except ApprovalNotAuthenticatedError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+        row = await _record_manual_kill_switch_state(session, False, f"사용자 수동 해제 ({x_user_id})")
+
+    return EmergencyStopOut(kill_switch_active=row.kill_switch_active, kill_switch_reason=row.kill_switch_reason)
+
+
+class SafetyCheckItemOut(BaseModel):
+    key: str
+    label: str
+    status: str
+    """"ok" | "warning" | "manual_check" - never a fabricated "ok" for
+    something this endpoint can't actually verify; see each item below
+    for what real signal backs it."""
+    detail: str
+
+
+class SafetyCheckOut(BaseModel):
+    items: list[SafetyCheckItemOut]
+    all_ok: bool
+
+
+@router.get("/safety-check", response_model=SafetyCheckOut)
+async def get_safety_check() -> SafetyCheckOut:
+    """P45: the "시작 안전점검" onboarding screen's 5 checklist items -
+    every item here is a real signal, not a hardcoded green checkmark:
+
+    1. Demo/실거래 모드 - `Settings.live_trading` (already real).
+    2. 거래소 연결 정상 - a real lightweight call per configured broker
+       (KIS `get_quote("005930")`, Upbit `get_ticker_price("KRW-BTC")`).
+    3. 출금 권한 비활성 - reframed from "is my API key's withdrawal
+       permission off" (neither KIS's nor Upbit's public API exposes a
+       way to introspect that from here, so this project doesn't fake a
+       check it can't perform) to the actually-verifiable and arguably
+       more relevant claim: this app's own integration code never calls
+       any withdrawal endpoint for either broker - true by inspection of
+       `app/integrations/kis/`/`app/integrations/upbit/`, which implement
+       quote/balance/order placement and cancellation only.
+    4. 오늘 최대손실 한도 - whether the latest real `RiskStateRow` has a
+       configured (>0) `daily_loss_limit`; "warning" (not fabricated
+       "ok") if no risk state has been recorded yet.
+    5. 긴급정지 점검 완료 - whether the risk-state table is actually
+       reachable right now, the same storage `activate_emergency_stop()`
+       above writes to.
+    """
+    settings = get_settings()
+    items: list[SafetyCheckItemOut] = []
+
+    if settings.live_trading:
+        items.append(
+            SafetyCheckItemOut(
+                key="demo_mode",
+                label="실거래 모드",
+                status="warning",
+                detail="LIVE_TRADING이 활성화되어 실거래 모드로 실행 중입니다.",
+            )
+        )
+    else:
+        items.append(
+            SafetyCheckItemOut(
+                key="demo_mode",
+                label="Demo 모드",
+                status="ok",
+                detail="LIVE_TRADING이 꺼져 있어 데모(모의) 환경이 활성화되어 있습니다.",
+            )
+        )
+
+    kis_ok: bool | None = None
+    if settings.kis_configured:
+        try:
+            async with httpx.AsyncClient(base_url=settings.kis_rest_base_url, timeout=10.0) as client:
+                auth = KisAuth(client=client, settings=settings)
+                rest = KisRestClient(client, auth)
+                await rest.get_quote("005930")
+            kis_ok = True
+        except (KisApiError, httpx.HTTPError, KeyError, ValueError):
+            kis_ok = False
+
+    upbit_ok: bool
+    try:
+        async with httpx.AsyncClient(base_url=settings.upbit_rest_base_url, timeout=10.0) as client:
+            upbit_rest = UpbitRestClient(client)
+            await upbit_rest.get_ticker_price("KRW-BTC")
+        upbit_ok = True
+    except (UpbitApiError, httpx.HTTPError, KeyError, ValueError):
+        upbit_ok = False
+
+    connection_parts = [f"KIS {'정상' if kis_ok else '연결 실패'}" if settings.kis_configured else "KIS 미설정"]
+    connection_parts.append(f"Upbit {'정상' if upbit_ok else '연결 실패'}")
+    connection_ok = (kis_ok is not False) and upbit_ok
+    items.append(
+        SafetyCheckItemOut(
+            key="exchange_connection",
+            label="거래소 연결 정상",
+            status="ok" if connection_ok else "warning",
+            detail=" · ".join(connection_parts),
+        )
+    )
+
+    items.append(
+        SafetyCheckItemOut(
+            key="withdrawal_disabled",
+            label="출금 권한 비활성",
+            status="ok",
+            detail="이 앱의 코드는 어떤 거래소의 출금 API도 호출하지 않습니다 (매수/매도/조회 기능만 구현됨).",
+        )
+    )
+
+    async with session_scope() as session:
+        risk_result = await session.execute(select(RiskStateRow).order_by(RiskStateRow.as_of.desc()).limit(1))
+        latest_risk = risk_result.scalar_one_or_none()
+
+    if latest_risk is not None and latest_risk.daily_loss_limit > 0:
+        items.append(
+            SafetyCheckItemOut(
+                key="daily_loss_limit",
+                label="오늘 최대손실 한도",
+                status="ok",
+                detail=f"일일 최대손실 한도가 {latest_risk.daily_loss_limit:,.0f}(으)로 설정되어 있습니다.",
+            )
+        )
+    else:
+        items.append(
+            SafetyCheckItemOut(
+                key="daily_loss_limit",
+                label="오늘 최대손실 한도",
+                status="warning",
+                detail="아직 리스크 상태가 기록되지 않았습니다 - 스캔/스케줄러가 최소 한 번 실행된 후 확인할 수 있습니다.",
+            )
+        )
+
+    try:
+        async with session_scope() as session:
+            await session.execute(select(RiskStateRow).limit(1))
+        items.append(
+            SafetyCheckItemOut(
+                key="kill_switch",
+                label="긴급정지 점검 완료",
+                status="ok",
+                detail="긴급정지(킬스위치) 상태 저장소에 정상적으로 접근할 수 있습니다.",
+            )
+        )
+    except Exception:  # noqa: BLE001 - any DB failure here must degrade to a status, never a 500
+        items.append(
+            SafetyCheckItemOut(
+                key="kill_switch",
+                label="긴급정지 점검 완료",
+                status="warning",
+                detail="긴급정지 상태 저장소에 접근할 수 없습니다 - 데이터베이스 연결을 확인하세요.",
+            )
+        )
+
+    return SafetyCheckOut(items=items, all_ok=all(item.status == "ok" for item in items))
