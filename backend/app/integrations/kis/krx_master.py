@@ -26,14 +26,24 @@ differs by market - 227 real data bytes for KOSPI (`row[-228:]` in the
 reference script includes one trailing newline byte past the 70 defined
 columns; the widths were independently summed here and cross-checked
 against that 228 to catch the same class of transcription error) and 221
-for KOSDAQ (`row[-222:]`, 64 columns). Only 4 of each market's columns are
+for KOSDAQ (`row[-222:]`, 64 columns). Only 5 of each market's columns are
 parsed - `거래정지`(halted)/`관리종목`(administrative) as tradability
-flags, and `전일거래량`(previous-day volume) as the liquidity-ranking
+flags, `전일거래량`(previous-day volume) as the liquidity-ranking
 signal `scripts/scan_stocks.py` uses to pick a real top-N universe instead
 of scanning every listed symbol (KOSPI+KOSDAQ combined runs well into the
 thousands - not viable against KIS's confirmed ~2 req/sec rate limit for
 the per-symbol daily-price/investor-flow calls `scan_stock_universe()`
-already makes). `시가총액`(market cap) is deliberately NOT used for
+already makes), and (P44) `ETP`/`ETP 상품구분코드` - a real deployment
+run surfaced the full-universe rotation (P39) filling up with ETF/ETN
+codes (names ending "...ETN", "...ETN(H)") ranked alongside real company
+stocks; this flag is how KIS's own master file marks "not a plain stock"
+(ETF and ETN share this one flag - the reference scripts' `part2_columns`
+list has no separate ETN-only column, and the 2-char `그룹코드`/
+`증권그룹구분코드` group-code values that would split ETF from ETN
+specifically were not independently confirmed, so this project doesn't
+guess at that split - see `rank_tradable_by_liquidity()`, which now
+excludes every ETP-flagged row the same way it already excluded halted/
+administrative ones). `시가총액`(market cap) is deliberately NOT used for
 cross-market ranking - KOSPI's column has no stated unit in the reference
 script while KOSDAQ's is explicitly "(억)", and this project won't compare
 two differently-united numbers without confirming they match; volume is
@@ -53,6 +63,15 @@ Re-verify against a real download the first time this runs somewhere with
 real network access; `tests/backend/test_krx_master.py`'s synthetic-zip
 fixture tests are built to the same byte layout and will keep passing
 either way, so they can't catch a real-world drift on their own.
+
+**P44 addendum**: the reference field_specs lists were re-fetched directly
+(same `curl`-on-raw-GitHub-content discipline as above) while adding the
+ETP column. The resulting KOSPI/KOSDAQ width/halted-offset/admin-offset/
+volume-offset values computed from that fresh fetch matched this module's
+pre-existing constants exactly (227/60/62/(81,12) and 221/55/57/(76,12))
+- strong independent cross-confirmation of both the original offsets and
+this fetch, though still not a substitute for the real-download
+verification above.
 """
 
 from __future__ import annotations
@@ -76,10 +95,12 @@ _SYMBOL_END = 9
 _NAME_START = 21
 
 # (part2 byte width excluding the trailing newline, halted-flag offset,
-# administrative-flag offset, (prev-day-volume offset, width)) - see this
-# module's own docstring for how each of these was derived.
-_KOSPI_LAYOUT = (227, 60, 62, (81, 12))
-_KOSDAQ_LAYOUT = (221, 55, 57, (76, 12))
+# administrative-flag offset, ETP-flag offset (P44 - "is this an ETF/ETN,
+# not a plain stock" - see module docstring), (prev-day-volume offset,
+# width)) - see this module's own docstring for how each of these was
+# derived.
+_KOSPI_LAYOUT = (227, 60, 62, 22, (81, 12))
+_KOSDAQ_LAYOUT = (221, 55, 57, 18, (76, 12))
 
 
 @dataclass
@@ -89,6 +110,7 @@ class MasterRow:
     halted: bool
     administrative: bool
     prev_day_volume: float
+    is_etp: bool = False
 
 
 def _parse_flag(raw: str) -> bool:
@@ -96,7 +118,12 @@ def _parse_flag(raw: str) -> bool:
 
 
 def _parse_master_text(
-    text: str, part2_width: int, halted_offset: int, administrative_offset: int, volume_offset_width: tuple[int, int]
+    text: str,
+    part2_width: int,
+    halted_offset: int,
+    administrative_offset: int,
+    etp_offset: int,
+    volume_offset_width: tuple[int, int],
 ) -> list[MasterRow]:
     vol_start, vol_width = volume_offset_width
     rows: list[MasterRow] = []
@@ -111,6 +138,7 @@ def _parse_master_text(
         name = part1[_NAME_START:].strip()
         halted = _parse_flag(part2[halted_offset : halted_offset + 1])
         administrative = _parse_flag(part2[administrative_offset : administrative_offset + 1])
+        is_etp = _parse_flag(part2[etp_offset : etp_offset + 1])
         volume_raw = part2[vol_start : vol_start + vol_width].strip()
         try:
             prev_day_volume = float(volume_raw) if volume_raw else 0.0
@@ -123,6 +151,7 @@ def _parse_master_text(
                 halted=halted,
                 administrative=administrative,
                 prev_day_volume=prev_day_volume,
+                is_etp=is_etp,
             )
         )
     return rows
@@ -137,23 +166,26 @@ async def fetch_kospi_master(client: httpx.AsyncClient) -> list[MasterRow]:
     response = await client.get(KOSPI_MASTER_URL)
     response.raise_for_status()
     text = _extract_member(response.content, _KOSPI_MEMBER_NAME)
-    width, halted_off, admin_off, vol = _KOSPI_LAYOUT
-    return _parse_master_text(text, width, halted_off, admin_off, vol)
+    width, halted_off, admin_off, etp_off, vol = _KOSPI_LAYOUT
+    return _parse_master_text(text, width, halted_off, admin_off, etp_off, vol)
 
 
 async def fetch_kosdaq_master(client: httpx.AsyncClient) -> list[MasterRow]:
     response = await client.get(KOSDAQ_MASTER_URL)
     response.raise_for_status()
     text = _extract_member(response.content, _KOSDAQ_MEMBER_NAME)
-    width, halted_off, admin_off, vol = _KOSDAQ_LAYOUT
-    return _parse_master_text(text, width, halted_off, admin_off, vol)
+    width, halted_off, admin_off, etp_off, vol = _KOSDAQ_LAYOUT
+    return _parse_master_text(text, width, halted_off, admin_off, etp_off, vol)
 
 
 def rank_tradable_by_liquidity(rows: list[MasterRow], top_n: int) -> list[MasterRow]:
     """Excludes halted/administrative-designated symbols (per docs/
     MASTER_SPEC.md's general quality bar against recommending low-quality
     setups - the same instinct as crypto's pump-risk filtering, applied
-    here to KIS's own tradability flags), then returns the `top_n` by
-    previous-day volume, descending."""
-    tradable = [r for r in rows if not r.halted and not r.administrative]
+    here to KIS's own tradability flags) and ETP-flagged ones (P44 - ETFs/
+    ETNs track an index/derivative rather than one company, so the
+    PRE-BREAKOUT score's institutional-accumulation/earnings-driven
+    signals don't mean the same thing for them; see module docstring),
+    then returns the `top_n` by previous-day volume, descending."""
+    tradable = [r for r in rows if not r.halted and not r.administrative and not r.is_etp]
     return sorted(tradable, key=lambda r: r.prev_day_volume, reverse=True)[:top_n]

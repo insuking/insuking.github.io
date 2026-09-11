@@ -1,4 +1,4 @@
-# Regime-Adaptive Radar (P34-P42)
+# Regime-Adaptive Radar (P34-P44)
 
 This extends the stock radar from "rank candidates by a single score" to
 three additional, independent signals layered on top: how a symbol's
@@ -269,6 +269,39 @@ confirmed working) - no new frontend component tests were added beyond
 updating existing fixtures for the new `market` field, since none of
 these five pages had a pre-existing coverage gap this pass needed to fix
 beyond what the manual/backend verification already covers.
+
+## P44 - Exclude ETF/ETN from the PRE-BREAKOUT scan universe
+
+A real deployment run of the P39 full-universe rotation surfaced the
+종목레이더 tab filled with ETF/ETN codes (names ending "...ETN",
+"...ETN(H)") ranked alongside real company stocks, several scoring
+higher than genuine stock candidates - reported directly by the user from
+a live screenshot. Root cause: `app/db/models.py`'s `SecurityRow.is_etf`/
+`is_etn` columns have existed since P23 but were never populated by
+anything, and `app/integrations/kis/krx_master.py`'s KOSPI/KOSDAQ master-
+file parser never read the master file's own `ETP` flag (KIS's own way of
+marking "this is an ETF/ETN, not a plain stock") - so nothing ever
+excluded them from the P39 rotation, and the PRE-BREAKOUT score's
+institutional-accumulation/OBV/earnings-driven signals got computed for
+index-tracking derivative products they were never designed to evaluate.
+
+Fixed by adding the real `ETP` flag to `MasterRow`/`_parse_master_text()`
+(byte offset independently re-derived from KIS's public reference scripts
+and cross-checked against this module's pre-existing halted/
+administrative/volume offsets, which matched exactly - see that module's
+own docstring for the full provenance) and excluding `is_etp` rows in
+`rank_tradable_by_liquidity()`, the same place halted/administrative
+symbols were already excluded. Deliberately does **not** attempt to split
+ETF from ETN specifically (`SecurityRow.is_etf`/`is_etn` stay unpopulated,
+same as before) - the reference master file has one shared `ETP` flag for
+both, and the 2-character group code that would distinguish them was not
+independently confirmed, so this project doesn't guess at that split. One
+combined `is_etp` exclusion cleanly fixes the reported symptom without
+fabricating a finer distinction it can't back up.
+
+Takes effect on the next real scan run once redeployed - see
+`docker compose up -d --build backend scheduler` in this project's own
+deployment notes.
 
 ## Known gaps - explicitly out of scope this pass, not silently skipped
 
