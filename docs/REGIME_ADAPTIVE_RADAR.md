@@ -1,4 +1,4 @@
-# Regime-Adaptive Radar (P34-P40)
+# Regime-Adaptive Radar (P34-P41)
 
 This extends the stock radar from "rank candidates by a single score" to
 three additional, independent signals layered on top: how a symbol's
@@ -191,6 +191,35 @@ performance`'s `risk_avoidance` field (replacing its current
 7-day-activity-count stand-in) is the natural next step, once the harness
 itself has been run against enough real history to trust its numbers.
 
+## P41 - Intraday RS/Heat Read API
+
+Closes the "dedicated read helper/API for intraday RS - still a
+follow-up, not yet built" line from this doc's own Known gaps (below).
+`app/stock_radar/regime_persistence.py`'s `get_intraday_interaction_readings()`/
+`get_intraday_heat_readings()` read the real per-run history already
+accumulating in `regime_relative_strength`/`overheat_scores` (P34/P35) -
+`scripts/reconfirm_entries.py` computes `observed_at = datetime.now(UTC)`
+once per run and persists it unchanged into both tables, so every real
+`reconfirm_entries.py` run (the P32 scheduler triggers one roughly every
+`SCHEDULER_STOCK_INTERVAL_SECONDS` during KRX hours) leaves a distinct,
+queryable timestamp behind - not just the latest reading.
+
+Exposed via `GET /api/stock-radar/{symbol}/intraday` (optional `since`
+query param, ISO 8601 - defaults to the start of today's KST calendar
+day). Returns two chronological lists (`interaction_readings`/
+`heat_readings`) rather than trying to merge them into one combined
+timeline, since interaction rows depend on an extra
+`get_investor_trend()` call per CONFIRMED symbol that can fail
+independently of the heat computation for the same symbol/run (see
+P34's own module docstring) - the two are not guaranteed 1:1 even when
+persisted moments apart in the same run.
+
+No frontend view yet - this pass is the backend read path only, proven
+by real DB-backed tests
+(`test_regime_persistence.py`/`test_stock_radar_intraday_api.py`); a
+시장/종목 tab UI to actually display the timeline is a natural, separate
+follow-up.
+
 ## Known gaps - explicitly out of scope this pass, not silently skipped
 
 Some pieces the original request asked for still have no real data
@@ -213,7 +242,8 @@ honestly build and test. Listed here rather than faked:
   during KRX hours under the P32 scheduler - so multiple real intraday
   snapshots per symbol per day already exist and are queryable by
   `observed_at`. Coarser than tick-level RS, but real data, not a guess.
-  A dedicated read helper/API for it is still a follow-up, not yet built.
+  The read API is now built (P41, above); a frontend view of it is still
+  a follow-up.
 - **Weekly weight auto-retuning / labeling learning loop**: `regime_
   relative_strength.label` and a symbol's eventual outcome give the raw
   material for this, but the retuning process itself needs real trading

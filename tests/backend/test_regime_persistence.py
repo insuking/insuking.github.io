@@ -13,7 +13,12 @@ from app.db.models import OverheatScoreRow, RegimeRelativeStrengthRow
 from app.db.session import session_scope
 from app.stock_radar.overheat import HeatScore, HeatStatus
 from app.stock_radar.regime_interaction import InteractionLabel, InteractionScore
-from app.stock_radar.regime_persistence import persist_interaction_score, upsert_heat_score
+from app.stock_radar.regime_persistence import (
+    get_intraday_heat_readings,
+    get_intraday_interaction_readings,
+    persist_interaction_score,
+    upsert_heat_score,
+)
 
 pytestmark = [pytest.mark.P34, pytest.mark.P35, pytest.mark.asyncio]
 
@@ -124,3 +129,61 @@ async def test_upsert_heat_score_replaces_rather_than_duplicates_the_same_observ
     assert len(rows) == 1
     assert rows[0].status == "TOO_LATE"
     assert rows[0].heat_score == pytest.approx(112.5)
+
+
+@pytest.mark.P41
+async def test_get_intraday_interaction_readings_returns_todays_readings_chronologically() -> None:
+    older = datetime(2026, 9, 10, 9, 0, tzinfo=UTC)
+    newer = datetime(2026, 9, 10, 9, 30, tzinfo=UTC)
+    day_before = datetime(2026, 9, 9, 9, 0, tzinfo=UTC)
+    score = InteractionScore(1.0, 1.0, 2.0, InteractionLabel.NEUTRAL)
+
+    async with session_scope() as session:
+        await persist_interaction_score(
+            session, symbol=_TEST_SYMBOL, market_regime="NEUTRAL", benchmark_return_pct=0.0,
+            stock_return_pct=0.0, foreign_net_today=0.0, institution_net_today=0.0, score=score,
+            observed_at=day_before,
+        )
+        await persist_interaction_score(
+            session, symbol=_TEST_SYMBOL, market_regime="NEUTRAL", benchmark_return_pct=0.0,
+            stock_return_pct=0.0, foreign_net_today=0.0, institution_net_today=0.0, score=score,
+            observed_at=newer,
+        )
+        await persist_interaction_score(
+            session, symbol=_TEST_SYMBOL, market_regime="NEUTRAL", benchmark_return_pct=0.0,
+            stock_return_pct=0.0, foreign_net_today=0.0, institution_net_today=0.0, score=score,
+            observed_at=older,
+        )
+        await session.commit()
+
+        readings = await get_intraday_interaction_readings(session, _TEST_SYMBOL, since=datetime(2026, 9, 10, tzinfo=UTC))
+
+    assert [r.observed_at for r in readings] == [older, newer]
+
+
+@pytest.mark.P41
+async def test_get_intraday_interaction_readings_is_empty_for_a_symbol_with_no_readings() -> None:
+    async with session_scope() as session:
+        readings = await get_intraday_interaction_readings(
+            session, "TEST-NO-SUCH-SYMBOL", since=datetime(2026, 9, 10, tzinfo=UTC)
+        )
+
+    assert readings == []
+
+
+@pytest.mark.P41
+async def test_get_intraday_heat_readings_returns_todays_readings_chronologically() -> None:
+    older = datetime(2026, 9, 10, 9, 0, tzinfo=UTC)
+    newer = datetime(2026, 9, 10, 9, 30, tzinfo=UTC)
+    day_before = datetime(2026, 9, 9, 9, 0, tzinfo=UTC)
+    score = HeatScore(1.0, 1.0, 1.0, None, None, 1.0, None, 10.0, HeatStatus.NORMAL)
+
+    async with session_scope() as session:
+        await upsert_heat_score(session, symbol=_TEST_SYMBOL, score=score, observed_at=day_before)
+        await upsert_heat_score(session, symbol=_TEST_SYMBOL, score=score, observed_at=newer)
+        await upsert_heat_score(session, symbol=_TEST_SYMBOL, score=score, observed_at=older)
+        await session.commit()
+
+        readings = await get_intraday_heat_readings(session, _TEST_SYMBOL, since=datetime(2026, 9, 10, tzinfo=UTC))
+
+    assert [r.observed_at for r in readings] == [older, newer]

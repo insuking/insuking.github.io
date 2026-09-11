@@ -14,12 +14,15 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import OverheatScoreRow, RegimeRelativeStrengthRow
 from app.stock_radar.overheat import HeatScore
 from app.stock_radar.regime_interaction import InteractionScore
+
+_DEFAULT_INTRADAY_LIMIT = 200
 
 
 async def persist_interaction_score(
@@ -94,3 +97,43 @@ async def upsert_heat_score(
     update_cols = {k: v for k, v in values.items() if k not in ("symbol", "observed_at", "created_at")}
     stmt = stmt.on_conflict_do_update(index_elements=["symbol", "observed_at"], set_=update_cols)
     await session.execute(stmt)
+
+
+async def get_intraday_interaction_readings(
+    session: AsyncSession, symbol: str, since: datetime, limit: int = _DEFAULT_INTRADAY_LIMIT
+) -> list[RegimeRelativeStrengthRow]:
+    """Chronological (oldest first) history of `symbol`'s P34 interaction-
+    score readings since `since` - every real `reconfirm_entries.py` run
+    that scored it that day, not just the latest. The P32 scheduler runs
+    this roughly every `SCHEDULER_STOCK_INTERVAL_SECONDS` during KRX
+    hours, so a full trading day typically has several real readings,
+    not one - this is the dedicated read path
+    `docs/REGIME_ADAPTIVE_RADAR.md`'s Known-gaps section flagged as
+    "not yet built" for the coarser-than-tick-level intraday RS
+    substitute already accumulating in this table.
+    """
+    result = await session.execute(
+        select(RegimeRelativeStrengthRow)
+        .where(RegimeRelativeStrengthRow.symbol == symbol, RegimeRelativeStrengthRow.observed_at >= since)
+        .order_by(RegimeRelativeStrengthRow.observed_at.asc())
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+async def get_intraday_heat_readings(
+    session: AsyncSession, symbol: str, since: datetime, limit: int = _DEFAULT_INTRADAY_LIMIT
+) -> list[OverheatScoreRow]:
+    """Same as `get_intraday_interaction_readings()` but for P35's heat/
+    TOO-LATE readings - each real `reconfirm_entries.py` run persists a
+    distinct `(symbol, observed_at)` row (a full timestamp, never
+    truncated to the day - see `upsert_heat_score()`'s own docstring for
+    why that still replaces rather than duplicates only when a run is
+    re-executed at the *exact* same observed_at)."""
+    result = await session.execute(
+        select(OverheatScoreRow)
+        .where(OverheatScoreRow.symbol == symbol, OverheatScoreRow.observed_at >= since)
+        .order_by(OverheatScoreRow.observed_at.asc())
+        .limit(limit)
+    )
+    return list(result.scalars().all())
