@@ -127,3 +127,56 @@ credentials, a real multi-day soak, a live market feed).
    verified end-to-end and a human explicitly deciding to enable
    `LIVE_TRADING` — `LIVE_AUTO` stays disabled regardless, permanently, per
    docs/MASTER_SPEC.md section A.
+
+## 2026-09-11 update: still MONITOR READY, but items 2-3 above are done
+
+Everything above this line is the original Day 11/P22 assessment,
+unchanged. Development continued well past the original 11-day scope
+(P23-P46 - stock radar regime engine, macro/overheat gating, the P32
+scheduler, Android PWA/TWA, the ETP-exclusion fix, the SmartCoin dark-UI
+redesign with real account balance/emergency-stop/manual-position-close,
+and a safety-check onboarding fix) - see docs/REGIME_ADAPTIVE_RADAR.md,
+docs/ANDROID_APP.md, and docs/SMARTCOIN_UI.md for what each phase
+actually built. The overall readiness state has **not** advanced past
+`MONITOR READY`, because the two things that gate `PAPER READY` (real
+broker credentials, a real multi-day soak) are exactly what this sandbox
+still cannot provide - but two items on the original path-to-`PAPER
+READY` list above are now genuinely done, not just planned:
+
+- **Item 2 (continuously-running market-data loop) is done.** P32's
+  `scripts/scheduler.py` is wired as its own `scheduler` service in
+  `docker-compose.yml` (`command: ["python", "scripts/scheduler.py"]`) -
+  a real deployment now keeps scanning crypto every cycle, stock during
+  KRX hours, persists real KOSPI/BTC candles (P37), runs the P38
+  premarket macro check once daily, and snapshots real account balance
+  (P45) every cycle. `market_regime`/`btc_regime` stop being `null` as
+  soon as this service has run for a while against a real deployment -
+  no further backend work needed here.
+- **Item 3 (`market_index_symbol`) is done.** `Settings.market_index_symbol`
+  defaults to `"0001"` (KOSPI, matching `KisRestClient.KOSPI_INDEX_CODE`
+  and what `scripts/scan_stocks.py` actually persists candles under) -
+  see `app/core/config.py`'s own comment for why this is no longer an
+  open decision.
+
+**What's still genuinely blocking `PAPER READY`, and who can unblock it:**
+
+1. **Real KIS/Toss/Upbit/Kakao credentials.** Every real-connection
+   integration test remains honestly `BLOCKED` in this sandbox - not for
+   lack of code, but for lack of an account. Only the deployer can
+   provision these (see docs/KIS_SETUP.md, docs/TOSS_SETUP.md,
+   docs/KAKAO_SETUP.md) and place them in their own `.env` on their own
+   machine - they should never be pasted into a chat session with an AI
+   assistant, this one included.
+2. **The real 24h-minimum / 72h-target soak.** Still only ever run as the
+   130-cycle bounded `soak_lite.py` pass - a real signal against gross
+   leaks/crashes, not a substitute for watching a live deployment over
+   real wall-clock days. This needs the deployer's own machine running
+   `docker compose up -d` continuously while watching the 시스템 tab and
+   incident log, not something achievable from a remote development
+   session.
+
+Full gate re-verified clean as of this update: backend
+`ruff check app`/`mypy app` clean (133 source files), full pytest suite
+**808 passed, 44 skipped** (skips unchanged - still the same honest
+`BLOCKED` real-credential/real-egress cases); frontend `oxlint` clean,
+`tsc -b && vite build` clean, `vitest run` **56 passed**.
