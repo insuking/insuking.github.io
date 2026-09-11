@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
-import { fetchDashboardSummary, fetchKakaoLoginUrl } from "../api/client";
+import { useState } from "react";
+import { fetchDashboardSummary, fetchKakaoLoginUrl, fetchPendingApprovals } from "../api/client";
 import { RecommendationCard } from "../components/RecommendationCard";
 import type { DashboardSummary } from "../types/dashboard";
+import type { PendingApproval } from "../types/approval";
 import { currentUserId } from "../auth";
+import { usePolledFetch } from "../hooks/usePolledFetch";
 
 const HEALTH_LABEL: Record<string, string> = {
   HEALTHY: "정상",
@@ -13,33 +15,37 @@ const HEALTH_LABEL: Record<string, string> = {
   OFFLINE: "오프라인",
 };
 
+const ASSET_LABEL: Record<string, string> = {
+  STOCK: "주식",
+  CRYPTO: "코인",
+};
+
+const SUMMARY_POLL_MS = 30_000;
+
 /**
- * Radar tab / home screen (P21) - docs/MASTER_SPEC.md UX PRINCIPLES: within
- * five seconds the reader must be able to answer "is the market safe right
- * now? is there a recommendation? does something need approval? are open
- * positions safe? how much of today's risk budget is left?" - one fetch
- * (`/api/dashboard/summary`) backs every widget below so there's no
- * waterfall of requests delaying that answer.
+ * Radar tab / home screen (P21, extended in P42) - docs/MASTER_SPEC.md UX
+ * PRINCIPLES: within five seconds the reader must be able to answer "is
+ * the market safe right now? is there a recommendation? does something
+ * need approval? are open positions safe? how much of today's risk budget
+ * is left?" - one fetch (`/api/dashboard/summary`) backs every widget
+ * below so there's no waterfall of requests delaying that answer. That
+ * fetch now also auto-refreshes every 30s and exposes a retry button on
+ * failure (P42 items 2/5). "지금 확인" (P42 item 1) reveals the real
+ * pending-approval list inline via the read-only `/api/approvals` list -
+ * it never lets you decide from here, since only the Kakao-delivered
+ * token can still do that (see backend/app/api/approvals.py's docstring).
  */
 export function HomePage() {
-  const [summary, setSummary] = useState<DashboardSummary | null>(null);
-  const [loadError, setLoadError] = useState(false);
-  const [loginError, setLoginError] = useState<string | null>(null);
   const userId = currentUserId();
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchDashboardSummary()
-      .then((data) => {
-        if (!cancelled) setSummary(data);
-      })
-      .catch(() => {
-        if (!cancelled) setLoadError(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const {
+    data: summary,
+    error: loadError,
+    refetch,
+  } = usePolledFetch<DashboardSummary>(fetchDashboardSummary, SUMMARY_POLL_MS);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [pending, setPending] = useState<PendingApproval[] | null>(null);
+  const [pendingLoading, setPendingLoading] = useState(false);
+  const [pendingError, setPendingError] = useState(false);
 
   async function handleKakaoLogin() {
     setLoginError(null);
@@ -48,6 +54,20 @@ export function HomePage() {
       window.location.href = authorize_url;
     } catch {
       setLoginError("카카오 로그인을 시작할 수 없습니다. 잠시 후 다시 시도해주세요.");
+    }
+  }
+
+  async function handleCheckApprovals() {
+    if (!userId) return;
+    setPendingLoading(true);
+    setPendingError(false);
+    try {
+      const result = await fetchPendingApprovals(userId);
+      setPending(result.approvals);
+    } catch {
+      setPendingError(true);
+    } finally {
+      setPendingLoading(false);
     }
   }
 
@@ -87,9 +107,35 @@ export function HomePage() {
 
       <section className="card">
         <p className="card-title">승인 대기 {summary?.pending_approvals ?? 0}건</p>
-        <button type="button" className="cta" disabled={!summary || summary.pending_approvals === 0}>
-          지금 확인
+        <button
+          type="button"
+          className="cta"
+          disabled={!summary || summary.pending_approvals === 0 || !userId || pendingLoading}
+          onClick={handleCheckApprovals}
+        >
+          {pendingLoading ? "확인 중..." : "지금 확인"}
         </button>
+        {!userId && summary && summary.pending_approvals > 0 && (
+          <p className="muted small">카카오 로그인 후 확인할 수 있습니다.</p>
+        )}
+        {pendingError && (
+          <p className="muted small">승인 목록을 불러오지 못했습니다. 카카오톡 메시지를 확인해주세요.</p>
+        )}
+        {pending && pending.length === 0 && <p className="muted small">대기 중인 승인이 없습니다.</p>}
+        {pending && pending.length > 0 && (
+          <>
+            {pending.map((approval) => (
+              <div className="card-row" key={approval.id}>
+                <span>
+                  {approval.symbol} · {ASSET_LABEL[approval.asset_type] ?? approval.asset_type} (점수{" "}
+                  {Math.round(approval.score)})
+                </span>
+                <span className="muted">{Math.max(0, Math.floor(approval.remaining_seconds / 60))}분 남음</span>
+              </div>
+            ))}
+            <p className="muted small">카카오톡으로 받은 메시지에서 실제 승인/거절을 진행하세요.</p>
+          </>
+        )}
       </section>
 
       <section className="card">
@@ -121,7 +167,14 @@ export function HomePage() {
         ))}
       </section>
 
-      {loadError && <p className="muted">데이터를 불러오지 못했습니다.</p>}
+      {loadError && (
+        <section className="card">
+          <p className="muted">데이터를 불러오지 못했습니다.</p>
+          <button type="button" className="retry-button" onClick={refetch}>
+            다시 시도
+          </button>
+        </section>
+      )}
     </main>
   );
 }

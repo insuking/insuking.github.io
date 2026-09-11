@@ -1,6 +1,16 @@
 import type { CallbackResponse, LoginUrlResponse } from "../types/auth";
-import type { ApprovalDecisionType, ApprovalDetail, DecideResult } from "../types/approval";
-import type { DashboardPerformance, DashboardSummary, IncidentOut } from "../types/dashboard";
+import type {
+  ApprovalDecisionType,
+  ApprovalDetail,
+  DecideResult,
+  PendingApprovalsResponse,
+} from "../types/approval";
+import type {
+  DashboardPerformance,
+  DashboardSummary,
+  IncidentOut,
+  PositionPricesResponse,
+} from "../types/dashboard";
 import type { ReadinessResponse } from "../types/health";
 import type { StockRadarLatest } from "../types/stockRadar";
 
@@ -65,6 +75,24 @@ export async function decideApproval(
     throw new ApprovalApiError(response.status, await _readDetail(response));
   }
   return (await response.json()) as DecideResult;
+}
+
+export async function fetchPendingApprovals(userId: string): Promise<PendingApprovalsResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/approvals`, {
+    headers: { "X-User-Id": userId },
+  });
+  if (!response.ok) {
+    throw new ApprovalApiError(response.status, await _readDetail(response));
+  }
+  return (await response.json()) as PendingApprovalsResponse;
+}
+
+export async function fetchPositionsLivePrices(): Promise<PositionPricesResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/dashboard/positions/live-prices`);
+  if (!response.ok) {
+    throw new ApprovalApiError(response.status, await _readDetail(response));
+  }
+  return (await response.json()) as PositionPricesResponse;
 }
 
 export async function fetchDashboardSummary(): Promise<DashboardSummary> {

@@ -7,6 +7,7 @@ function buildCandidate(overrides: Partial<StockRadarCandidate> = {}): StockRada
   return {
     symbol: "005930",
     name: "삼성전자",
+    market: "KOSPI",
     rank: 1,
     total_score: 43.9,
     max_available: 77,

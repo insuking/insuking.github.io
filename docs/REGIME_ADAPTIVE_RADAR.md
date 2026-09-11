@@ -1,4 +1,4 @@
-# Regime-Adaptive Radar (P34-P41)
+# Regime-Adaptive Radar (P34-P42)
 
 This extends the stock radar from "rank candidates by a single score" to
 three additional, independent signals layered on top: how a symbol's
@@ -219,6 +219,56 @@ by real DB-backed tests
 (`test_regime_persistence.py`/`test_stock_radar_intraday_api.py`); a
 시장/종목 tab UI to actually display the timeline is a natural, separate
 follow-up.
+
+## P42 - Frontend/UX pass (pending-approval visibility, live P&L, auto-refresh)
+
+Closes a set of frontend gaps found by reviewing the six-tab app end to
+end: the home screen's "지금 확인" button did nothing, no page refreshed
+itself once mounted, open positions showed entry/stop but never a live
+price or P&L, the stock radar list had no freshness or KOSPI/KOSDAQ
+filter, and a failed fetch left a dead end with no way to retry short of
+reloading the whole app.
+
+- **Pending-approval visibility**: `GET /api/approvals` (backend) is a
+  read-only listing of the authenticated user's pending (non-terminal,
+  non-expired) approvals, joined with the recommendation each is for.
+  "지금 확인" now calls it and renders the list inline. It deliberately
+  changes nothing about *deciding* an approval - `Approval.token_hash`
+  only ever stores a hash, the plaintext token only ever existed at
+  creation time (sent via Kakao), and this endpoint never exposes one.
+  The real Kakao-delivered token stays the only way to open/decide an
+  approval (see `app/api/approvals.py`'s module docstring); weakening
+  that for in-app convenience was explicitly rejected.
+- **Live position P&L**: `GET /api/dashboard/positions/live-prices`
+  fetches one real quote per open position (KIS for STOCK, Upbit for
+  CRYPTO) and computes unrealized P&L, degrading individual fields to
+  `null` - never a stale or fabricated number - on any fetch failure.
+  Kept as its own endpoint rather than folded into `/summary`, since it
+  makes real external calls per request; the frontend polls it on its
+  own, slower cadence (20s) than the position list itself (30s), and only
+  while the 포지션 tab is mounted.
+- **Auto-refresh + retry**: a shared `usePolledFetch` hook
+  (`frontend/src/hooks/usePolledFetch.ts`) now backs every one of the six
+  tabs - each polls its own data on a cadence matched to how often that
+  data actually changes (30s for summary-backed tabs and the stock radar
+  scan's own poll, 60s for market/performance), keeps the last good data
+  on screen through a failed background refresh, and exposes a "다시
+  시도" retry button whenever a fetch does fail.
+- **Stock radar freshness + market filter**: `/api/stock-radar/latest`
+  candidates now carry the security's `market` (KOSPI/KOSDAQ), and the
+  종목레이더 tab shows how long ago the underlying scan ran (relative to
+  `scored_at`) plus a KOSPI/전체/KOSDAQ filter chip row - so a stale scan
+  or an irrelevant market's candidates are never silently mixed in with
+  current ones.
+
+All five verified with real backend tests (`test_approvals_api.py`,
+`test_dashboard_api.py`) and by loading each changed page in a browser
+against a mocked API (login prompt, pending-approval list, live-P&L
+color/sign, freshness text, and the market filter all screenshotted and
+confirmed working) - no new frontend component tests were added beyond
+updating existing fixtures for the new `market` field, since none of
+these five pages had a pre-existing coverage gap this pass needed to fix
+beyond what the manual/backend verification already covers.
 
 ## Known gaps - explicitly out of scope this pass, not silently skipped
 

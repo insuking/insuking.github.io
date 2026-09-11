@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
 import { fetchPerformance } from "../api/client";
 import type { DashboardPerformance, PerformanceSummary } from "../types/dashboard";
+import { usePolledFetch } from "../hooks/usePolledFetch";
+
+const PERFORMANCE_POLL_MS = 60_000;
 
 const numberFormatter = new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 0 });
 
@@ -42,26 +44,16 @@ function PerformanceCard({ title, summary }: { title: string; summary: Performan
   );
 }
 
-/** 성과 tab - real and paper PnL are always shown as two separate cards,
- * never blended into one number (see backend/app/api/dashboard.py's
- * `DashboardPerformance` docstring for why). */
+/** 성과 tab (extended in P42) - real and paper PnL are always shown as
+ * two separate cards, never blended into one number (see
+ * backend/app/api/dashboard.py's `DashboardPerformance` docstring for
+ * why). Auto-refreshes every 60s with a retry button on failure. */
 export function PerformancePage() {
-  const [performance, setPerformance] = useState<DashboardPerformance | null>(null);
-  const [loadError, setLoadError] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchPerformance()
-      .then((data) => {
-        if (!cancelled) setPerformance(data);
-      })
-      .catch(() => {
-        if (!cancelled) setLoadError(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const {
+    data: performance,
+    error: loadError,
+    refetch,
+  } = usePolledFetch<DashboardPerformance>(fetchPerformance, PERFORMANCE_POLL_MS);
 
   return (
     <main className="page">
@@ -70,7 +62,14 @@ export function PerformancePage() {
       </header>
 
       {performance === null && !loadError && <p className="muted">불러오는 중...</p>}
-      {loadError && <p className="muted">데이터를 불러오지 못했습니다.</p>}
+      {loadError && (
+        <section className="card">
+          <p className="muted">데이터를 불러오지 못했습니다.</p>
+          <button type="button" className="retry-button" onClick={refetch}>
+            다시 시도
+          </button>
+        </section>
+      )}
 
       {performance && (
         <>

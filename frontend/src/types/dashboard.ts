@@ -61,3 +61,18 @@ export interface DashboardPerformance {
   paper: PerformanceSummary;
   risk_avoidance: RiskAvoidanceSummary;
 }
+
+/** `current_price`/`unrealized_pnl`/`unrealized_pnl_pct` are all `null`
+ * together when a live quote couldn't be fetched (KIS/Upbit not
+ * configured, or the call failed) - see backend/app/api/dashboard.py's
+ * `PositionPriceOut` docstring. */
+export interface PositionPriceOut {
+  symbol: string;
+  current_price: number | null;
+  unrealized_pnl: number | null;
+  unrealized_pnl_pct: number | null;
+}
+
+export interface PositionPricesResponse {
+  prices: PositionPriceOut[];
+}

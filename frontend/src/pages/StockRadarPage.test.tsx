@@ -37,6 +37,7 @@ describe("StockRadarPage", () => {
           {
             symbol: "005930",
             name: "삼성전자",
+            market: "KOSPI",
             rank: 1,
             total_score: 43.9,
             max_available: 77,
@@ -46,6 +47,7 @@ describe("StockRadarPage", () => {
           {
             symbol: "000660",
             name: "SK하이닉스",
+            market: "KOSPI",
             rank: 2,
             total_score: 46.8,
             max_available: 77,

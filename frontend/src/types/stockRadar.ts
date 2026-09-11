@@ -12,6 +12,7 @@ export interface ScoreFactor {
 export interface StockRadarCandidate {
   symbol: string;
   name: string | null;
+  market: string | null;
   rank: number | null;
   total_score: number;
   max_available: number;

@@ -1,6 +1,14 @@
-import { useEffect, useState } from "react";
+import { useCallback } from "react";
 import { fetchDashboardSummary, fetchIncidents } from "../api/client";
 import type { DashboardSummary, IncidentOut } from "../types/dashboard";
+import { usePolledFetch } from "../hooks/usePolledFetch";
+
+const SYSTEM_POLL_MS = 30_000;
+
+interface SystemPageData {
+  summary: DashboardSummary;
+  incidents: IncidentOut[];
+}
 
 const HEALTH_LABEL: Record<string, string> = {
   HEALTHY: "정상",
@@ -25,30 +33,22 @@ function freshnessText(updatedAt: string | null): string {
   return `${hoursAgo}시간 전`;
 }
 
-/** 시스템 tab - P19's self-healing/watchdog state made visible: per-service
- * health (never just a single overall dot) and the recent incident log,
- * including whether each one required a human to step in. */
+/** 시스템 tab (extended in P42) - P19's self-healing/watchdog state made
+ * visible: per-service health (never just a single overall dot) and the
+ * recent incident log, including whether each one required a human to
+ * step in. Auto-refreshes every 30s with a retry button on failure. */
 export function SystemPage() {
-  const [summary, setSummary] = useState<DashboardSummary | null>(null);
-  const [incidents, setIncidents] = useState<IncidentOut[] | null>(null);
-  const [loadError, setLoadError] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all([fetchDashboardSummary(), fetchIncidents()])
-      .then(([summaryData, incidentData]) => {
-        if (!cancelled) {
-          setSummary(summaryData);
-          setIncidents(incidentData);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setLoadError(true);
-      });
-    return () => {
-      cancelled = true;
-    };
+  const fetchSystemData = useCallback(async (): Promise<SystemPageData> => {
+    const [summary, incidents] = await Promise.all([fetchDashboardSummary(), fetchIncidents()]);
+    return { summary, incidents };
   }, []);
+  const {
+    data,
+    error: loadError,
+    refetch,
+  } = usePolledFetch<SystemPageData>(fetchSystemData, SYSTEM_POLL_MS);
+  const summary = data?.summary ?? null;
+  const incidents = data?.incidents ?? null;
 
   return (
     <main className="page">
@@ -56,7 +56,14 @@ export function SystemPage() {
         <h1>시스템</h1>
       </header>
 
-      {loadError && <p className="muted">데이터를 불러오지 못했습니다.</p>}
+      {loadError && (
+        <section className="card">
+          <p className="muted">데이터를 불러오지 못했습니다.</p>
+          <button type="button" className="retry-button" onClick={refetch}>
+            다시 시도
+          </button>
+        </section>
+      )}
 
       {summary && (
         <>

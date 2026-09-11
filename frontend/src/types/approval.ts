@@ -27,6 +27,20 @@ export interface ApprovalDetail {
   risks: string[];
 }
 
+export interface PendingApproval {
+  id: string;
+  symbol: string;
+  asset_type: string;
+  score: number;
+  state: string;
+  expires_at: string;
+  remaining_seconds: number;
+}
+
+export interface PendingApprovalsResponse {
+  approvals: PendingApproval[];
+}
+
 export interface DecideResult {
   approval_state: string;
   /** P29 continuation - set only for a STOCK recommendation's APPROVE/

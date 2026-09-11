@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
 import { fetchDashboardSummary } from "../api/client";
 import type { DashboardSummary } from "../types/dashboard";
+import { usePolledFetch } from "../hooks/usePolledFetch";
+
+const MARKET_POLL_MS = 60_000;
 
 const REGIME_LABEL: Record<string, string> = {
   RISK_ON: "위험 선호 (RISK ON)",
@@ -32,27 +34,17 @@ function freshnessText(updatedAt: string | null): string | null {
   return `${hoursAgo}시간 전 갱신`;
 }
 
-/** 시장 tab - "is the market safe right now?" in more detail than the
- * home screen's one-line summary. `null` regimes are shown as an honest
- * "no data yet", never a guessed state (see backend/app/api/dashboard.py's
- * module docstring). */
+/** 시장 tab (extended in P42) - "is the market safe right now?" in more
+ * detail than the home screen's one-line summary. `null` regimes are
+ * shown as an honest "no data yet", never a guessed state (see
+ * backend/app/api/dashboard.py's module docstring). Auto-refreshes every
+ * 60s with a retry button on failure. */
 export function MarketPage() {
-  const [summary, setSummary] = useState<DashboardSummary | null>(null);
-  const [loadError, setLoadError] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchDashboardSummary()
-      .then((data) => {
-        if (!cancelled) setSummary(data);
-      })
-      .catch(() => {
-        if (!cancelled) setLoadError(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const {
+    data: summary,
+    error: loadError,
+    refetch,
+  } = usePolledFetch<DashboardSummary>(fetchDashboardSummary, MARKET_POLL_MS);
 
   return (
     <main className="page">
@@ -61,7 +53,14 @@ export function MarketPage() {
       </header>
 
       {summary === null && !loadError && <p className="muted">불러오는 중...</p>}
-      {loadError && <p className="muted">데이터를 불러오지 못했습니다.</p>}
+      {loadError && (
+        <section className="card">
+          <p className="muted">데이터를 불러오지 못했습니다.</p>
+          <button type="button" className="retry-button" onClick={refetch}>
+            다시 시도
+          </button>
+        </section>
+      )}
 
       {summary && (
         <>
