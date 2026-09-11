@@ -803,3 +803,51 @@ async def get_safety_check() -> SafetyCheckOut:
         )
 
     return SafetyCheckOut(items=items, all_ok=all(item.status == "ok" for item in items))
+
+
+class RiskStateSnapshotOut(BaseModel):
+    as_of: str
+    kill_switch_active: bool
+    kill_switch_reason: str | None
+    daily_loss: float
+    daily_loss_limit: float
+    exposure: float
+    exposure_limit: float
+
+
+class RiskStateHistoryOut(BaseModel):
+    snapshots: list[RiskStateSnapshotOut]
+
+
+_RISK_STATE_HISTORY_LIMIT = 50
+
+
+@router.get("/risk-states/history", response_model=RiskStateHistoryOut)
+async def get_risk_state_history() -> RiskStateHistoryOut:
+    """P46: the "비상정지와 복구" screen's real audit log. `risk_states`
+    (P18) is already append-only - see `RiskStateRow`'s own docstring -
+    so every automatic kill-switch evaluation and every manual
+    `activate_emergency_stop()`/`clear_emergency_stop()` call already left
+    a real row behind; this just reads the most recent ones back, newest
+    first. Never synthesizes an entry - an empty list is the honest answer
+    on a fresh deployment with no risk state recorded yet."""
+    async with session_scope() as session:
+        result = await session.execute(
+            select(RiskStateRow).order_by(RiskStateRow.as_of.desc()).limit(_RISK_STATE_HISTORY_LIMIT)
+        )
+        rows = list(result.scalars().all())
+
+    return RiskStateHistoryOut(
+        snapshots=[
+            RiskStateSnapshotOut(
+                as_of=row.as_of.isoformat(),
+                kill_switch_active=row.kill_switch_active,
+                kill_switch_reason=row.kill_switch_reason,
+                daily_loss=row.daily_loss,
+                daily_loss_limit=row.daily_loss_limit,
+                exposure=row.exposure,
+                exposure_limit=row.exposure_limit,
+            )
+            for row in rows
+        ]
+    )

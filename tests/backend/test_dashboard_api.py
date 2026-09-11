@@ -63,6 +63,7 @@ async def _cleanup():  # type: ignore[no-untyped-def]
     async with session_scope() as session:
         await session.execute(delete(SystemHealthRow).where(SystemHealthRow.service == GUARDIAN_SERVICE))
         await session.execute(delete(RiskStateRow).where(RiskStateRow.daily_loss_limit == 999999.0))
+        await session.execute(delete(RiskStateRow).where(RiskStateRow.daily_loss_limit == 888888.0))
         await session.execute(delete(Position).where(Position.symbol == _SYMBOL))
         await session.execute(delete(RecommendationRow).where(RecommendationRow.symbol == _SYMBOL))
         await session.execute(delete(Approval).where(Approval.user_id == "test-dashboard-user"))
@@ -861,3 +862,59 @@ async def test_safety_check_daily_loss_limit_ok_when_a_recent_risk_state_has_a_c
     loss_item = next(item for item in response.json()["items"] if item["key"] == "daily_loss_limit")
     assert loss_item["status"] == "ok"
     assert "999,999" in loss_item["detail"]
+
+
+@pytest.mark.P46
+async def test_risk_state_history_returns_real_rows_newest_first() -> None:
+    now = datetime.now(UTC)
+    async with session_scope() as session:
+        for offset_minutes, active in ((10, False), (5, True), (0, False)):
+            session.add(
+                RiskStateRow(
+                    as_of=now - timedelta(minutes=offset_minutes),
+                    daily_loss=0.0,
+                    daily_loss_limit=888888.0,  # this test's own cleanup sentinel
+                    exposure=0.0,
+                    exposure_limit=1_000_000.0,
+                    open_positions=0,
+                    max_positions=5,
+                    consecutive_stops=0,
+                    kill_switch_active=active,
+                    kill_switch_reason="사용자 수동 긴급정지" if active else None,
+                )
+            )
+        await session.commit()
+
+    async with await _client() as client:
+        response = await client.get("/api/dashboard/risk-states/history")
+
+    assert response.status_code == 200
+    sentinel_rows = [s for s in response.json()["snapshots"] if s["daily_loss_limit"] == 888888.0]
+    assert len(sentinel_rows) == 3
+    # newest first
+    timestamps = [s["as_of"] for s in sentinel_rows]
+    assert timestamps == sorted(timestamps, reverse=True)
+    assert sentinel_rows[1]["kill_switch_active"] is True
+
+
+@pytest.mark.P46
+async def test_risk_state_history_returns_the_real_shape_never_fabricated_fields() -> None:
+    """Doesn't force an empty table (this DB is shared across this whole
+    test file, and other tests' rows legitimately persist) - just proves
+    every field on a real row round-trips honestly, whatever rows exist."""
+    async with await _client() as client:
+        response = await client.get("/api/dashboard/risk-states/history")
+
+    assert response.status_code == 200
+    snapshots = response.json()["snapshots"]
+    assert isinstance(snapshots, list)
+    for snapshot in snapshots:
+        assert set(snapshot.keys()) == {
+            "as_of",
+            "kill_switch_active",
+            "kill_switch_reason",
+            "daily_loss",
+            "daily_loss_limit",
+            "exposure",
+            "exposure_limit",
+        }

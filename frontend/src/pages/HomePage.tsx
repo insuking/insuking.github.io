@@ -180,6 +180,9 @@ export function HomePage() {
         </div>
       </header>
       {emergencyMessage && <p className="muted small">{emergencyMessage}</p>}
+      <a href="#/emergency" className="muted small">
+        비상정지 감사 로그 보기 →
+      </a>
 
       {!userId && (
         <section className="card">

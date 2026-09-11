@@ -1,4 +1,4 @@
-# SmartCoin UI Redesign (P45)
+# SmartCoin UI Redesign (P45-P46)
 
 The user shared five real UI mockups (branded "SmartCoin") for a dark-theme
 redesign: a "시작 안전점검" onboarding safety checklist, a home dashboard
@@ -78,6 +78,87 @@ than building a parallel kill-switch mechanism, this inserts a new
 carried forward from the latest real state) - `RiskService.
 should_block_new_trades()` (P18) already reads "latest row by `as_of`"
 as current, so the effect is immediate with zero new blocking logic.
+
+## P46: position management + a richer emergency-stop screen
+
+The user shared four more mockups (06 주문 최종확인, 07 포지션 관리, 08
+분할청산 진행, 10 비상정지와 복구). This phase built a position detail
+page and a dedicated emergency-stop/recovery page, each backed by real
+data, plus a reusable press-and-hold confirmation control for the
+destructive real-money action this batch introduces.
+
+### New capability: manual position close ("즉시 청산")
+
+Before this pass, **nothing in this project could place a real SELL
+order against an existing position** - Guardian's own automatic exits
+(`app/guardian/service.py`) are decision-only by design (see its own
+module docstring: turning a decision into a real order was left to "a
+scheduled job, which doesn't exist anywhere in this repository yet").
+`app/positions/manual_close.py`'s `close_position_market()` is the first
+thing that does: one real market SELL for a position's full remaining
+quantity, via the same `ExecutionProvider.place_order()` every BUY order
+already goes through (`_require_live_trading()` gate included, unchanged
+- `LIVE_TRADING` stays a server-only setting). `POST
+/api/positions/{id}/close` wires it to KIS or Upbit by `asset_type`, the
+same routing `app/api/approvals.py` already uses for BUY orders, and
+requires the same Kakao-session authentication as every other real
+action in this project.
+
+### New capability: position detail + Guardian pause
+
+`GET /api/positions/{id}` (real live quote + real protective-order
+target prices) and `POST /api/positions/{id}/guardian` (toggles the one
+real flag `app/guardian/service.py:93` already checks before doing
+anything for that position - a paused position genuinely stops receiving
+trailing-stop tightening and failed-breakout exits, not a label change).
+
+**T1/T2 progress is shown via `Position.state`, not a computed fill
+percentage.** `Position` has no `trade_plan_id` foreign key back to the
+`TradePlan` that carries `t1_percent`/`t2_percent`, so there is no
+reliable way to look up which trade plan produced a given open position -
+inventing a symbol-based guess would fabricate a precision this schema
+doesn't have. The detail page instead shows a 4-step progress indicator
+driven by the real, already fill-derived `state`
+(OPEN→T1_FILLED→T2_FILLED→RUNNER→CLOSED), plus each real `ProtectiveOrder`'s
+target price as "손절가"/"T1 목표가"/"T2 목표가".
+
+### New capability: a real audit log for the emergency-stop screen
+
+`GET /api/dashboard/risk-states/history` just reads back `risk_states`
+(P18), which was already append-only - every automatic kill-switch
+evaluation and every manual `activate_emergency_stop()`/
+`clear_emergency_stop()` call already left a real row behind; this adds
+no new writes, only a way to read the history that already existed. The
+new `EmergencyStopPage` (`#/emergency`, linked from the home screen)
+shows the real current status plus this real log, never a synthesized
+activity feed.
+
+### New shared component: press-and-hold confirmation
+
+`HoldToConfirmButton` is the functional equivalent of the mockups'
+"n초간 눌러 확인" slider - press-and-hold gives the same "can't fire on
+an accidental tap" friction a drag slider does, without hand-rolling
+pointer-drag physics for what is ultimately a single boolean outcome.
+Used for "즉시 청산" and for activating/clearing 긴급정지 from the new
+detail screen - both real, destructive, real-money-adjacent actions.
+Releasing early cancels; nothing fires until the hold genuinely
+completes.
+
+### What P46 deliberately did not build
+
+- **A literal drag slider** matching mockup 06's exact visual - a
+  press-and-hold button gives the identical safety property (can't fire
+  without sustained deliberate input) without hand-rolled drag-gesture
+  math for a single boolean outcome.
+- **A percentage-based T1/T2 fill progress bar** - see above; this
+  schema has no reliable link from `Position` back to the `TradePlan`
+  that would make that percentage real, so it isn't shown as one.
+- **Retrofitting `ApprovalPage`'s existing 승인/거절 flow** with
+  `HoldToConfirmButton` - that flow already has a real, tested PIN-gated
+  confirmation step (mockup 06's underlying need); redesigning a working,
+  tested confirmation flow in the same pass as introducing this
+  project's first real manual SELL order was a larger change than this
+  batch needed to make.
 
 ## What was deliberately not built
 

@@ -13,6 +13,12 @@ import type {
   PositionPricesResponse,
 } from "../types/dashboard";
 import type { ReadinessResponse } from "../types/health";
+import type {
+  GuardianToggleResult,
+  ManualCloseResult,
+  PositionDetail,
+  RiskStateHistory,
+} from "../types/position";
 import type { StockRadarLatest } from "../types/stockRadar";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
@@ -172,6 +178,49 @@ export async function clearEmergencyStop(userId: string): Promise<EmergencyStopR
     throw new ApprovalApiError(response.status, await _readDetail(response));
   }
   return (await response.json()) as EmergencyStopResult;
+}
+
+export async function fetchPositionDetail(positionId: string): Promise<PositionDetail> {
+  const response = await fetch(`${API_BASE_URL}/api/positions/${positionId}`);
+  if (!response.ok) {
+    throw new ApprovalApiError(response.status, await _readDetail(response));
+  }
+  return (await response.json()) as PositionDetail;
+}
+
+export async function setPositionGuardianActive(
+  positionId: string,
+  userId: string,
+  active: boolean,
+): Promise<GuardianToggleResult> {
+  const response = await fetch(`${API_BASE_URL}/api/positions/${positionId}/guardian`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-User-Id": userId },
+    body: JSON.stringify({ active }),
+  });
+  if (!response.ok) {
+    throw new ApprovalApiError(response.status, await _readDetail(response));
+  }
+  return (await response.json()) as GuardianToggleResult;
+}
+
+export async function closePosition(positionId: string, userId: string): Promise<ManualCloseResult> {
+  const response = await fetch(`${API_BASE_URL}/api/positions/${positionId}/close`, {
+    method: "POST",
+    headers: { "X-User-Id": userId },
+  });
+  if (!response.ok) {
+    throw new ApprovalApiError(response.status, await _readDetail(response));
+  }
+  return (await response.json()) as ManualCloseResult;
+}
+
+export async function fetchRiskStateHistory(): Promise<RiskStateHistory> {
+  const response = await fetch(`${API_BASE_URL}/api/dashboard/risk-states/history`);
+  if (!response.ok) {
+    throw new ApprovalApiError(response.status, await _readDetail(response));
+  }
+  return (await response.json()) as RiskStateHistory;
 }
 
 export async function fetchKakaoLoginUrl(): Promise<LoginUrlResponse> {

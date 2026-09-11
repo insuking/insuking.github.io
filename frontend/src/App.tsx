@@ -3,10 +3,12 @@ import { ApprovalPage } from "./components/ApprovalPage";
 import { NavBar } from "./components/NavBar";
 import { currentUserId } from "./auth";
 import { tabFromHash, type TabId } from "./nav";
+import { EmergencyStopPage } from "./pages/EmergencyStopPage";
 import { HomePage } from "./pages/HomePage";
 import { KakaoCallbackPage } from "./pages/KakaoCallbackPage";
 import { MarketPage } from "./pages/MarketPage";
 import { PerformancePage } from "./pages/PerformancePage";
+import { PositionDetailPage } from "./pages/PositionDetailPage";
 import { PositionsPage } from "./pages/PositionsPage";
 import { RecommendationsPage } from "./pages/RecommendationsPage";
 import { SafetyCheckPage } from "./pages/SafetyCheckPage";
@@ -49,6 +51,21 @@ function isKakaoCallbackRoute(pathname: string): boolean {
   return pathname === "/auth/kakao/callback";
 }
 
+// A small, deliberate nested extension of the same hash scheme (see
+// nav.ts's own docstring on "#/positions etc." giving real back-button/
+// bookmark support without react-router) - `#/positions/:id` is an 8th
+// route this project's seven flat tabs never needed before P46's position
+// detail screen. `tabFromHash()` only matches the seven exact tab hashes,
+// so this is checked separately, before falling through to the tab pages.
+function matchPositionDetailRoute(hash: string): string | null {
+  const match = /^#\/positions\/([^/]+)$/.exec(hash);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function isEmergencyStopRoute(hash: string): boolean {
+  return hash === "#/emergency";
+}
+
 const TAB_PAGES: Record<TabId, ComponentType> = {
   radar: HomePage,
   stocks: StockRadarPage,
@@ -60,12 +77,12 @@ const TAB_PAGES: Record<TabId, ComponentType> = {
 };
 
 function App() {
-  const [tab, setTab] = useState<TabId>(() => tabFromHash(window.location.hash));
+  const [hash, setHash] = useState<string>(() => window.location.hash);
   const [safetyCheckPassed, setSafetyCheckPassed] = useState(hasPassedSafetyCheck);
 
   useEffect(() => {
     function onHashChange() {
-      setTab(tabFromHash(window.location.hash));
+      setHash(window.location.hash);
     }
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
@@ -89,6 +106,27 @@ function App() {
             setSafetyCheckPassed(true);
           }}
         />
+      </div>
+    );
+  }
+
+  const positionDetailId = matchPositionDetailRoute(hash);
+  const tab = tabFromHash(hash);
+
+  if (positionDetailId) {
+    return (
+      <div className="app-shell">
+        <PositionDetailPage positionId={positionDetailId} />
+        <NavBar active="positions" />
+      </div>
+    );
+  }
+
+  if (isEmergencyStopRoute(hash)) {
+    return (
+      <div className="app-shell">
+        <EmergencyStopPage />
+        <NavBar active="radar" />
       </div>
     );
   }

@@ -79,7 +79,7 @@ export function PositionsPage() {
       {positions?.map((position) => {
         const livePrice = priceBySymbol.get(position.symbol);
         return (
-          <section className="card" key={position.id}>
+          <a className="card position-row-link" key={position.id} href={`#/positions/${position.id}`}>
             <div className="card-row">
               <span className="card-title">{position.symbol}</span>
               <span className="muted">{STATE_LABEL[position.state] ?? position.state}</span>
@@ -117,7 +117,7 @@ export function PositionsPage() {
               <span>Guardian 보호</span>
               <span className="muted">{position.guardian_active ? "활성" : "비활성"}</span>
             </div>
-          </section>
+          </a>
         );
       })}
     </main>
