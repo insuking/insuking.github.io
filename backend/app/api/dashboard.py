@@ -22,6 +22,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+import httpx
 from fastapi import APIRouter
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -44,6 +45,11 @@ from app.db.models import Order as OrderRow
 from app.db.models import Position as PositionRow
 from app.db.models import Recommendation as RecommendationRow
 from app.db.session import session_scope
+from app.integrations.kis.auth import KisAuth
+from app.integrations.kis.errors import KisApiError
+from app.integrations.kis.rest_client import KisRestClient
+from app.integrations.upbit.errors import UpbitApiError
+from app.integrations.upbit.rest_client import UpbitRestClient
 from app.models.domain import (
     AssetType,
     Candle,
@@ -430,3 +436,80 @@ async def get_performance() -> DashboardPerformance:
             window_days=_RISK_AVOIDANCE_WINDOW_DAYS,
         ),
     )
+
+
+class PositionPriceOut(BaseModel):
+    """`current_price`/`unrealized_pnl`/`unrealized_pnl_pct` are all
+    `None` together when a live quote couldn't be fetched (KIS/Upbit not
+    configured, or the call failed) - never a stale or fabricated number
+    standing in for "unknown right now"."""
+
+    symbol: str
+    current_price: float | None
+    unrealized_pnl: float | None
+    unrealized_pnl_pct: float | None
+
+
+class PositionPricesResponse(BaseModel):
+    prices: list[PositionPriceOut]
+
+
+def _position_price_out(position: PositionRow, current_price: float | None) -> PositionPriceOut:
+    if current_price is None:
+        return PositionPriceOut(symbol=position.symbol, current_price=None, unrealized_pnl=None, unrealized_pnl_pct=None)
+    unrealized_pnl = (current_price - position.avg_entry_price) * position.quantity
+    unrealized_pnl_pct = (
+        (current_price - position.avg_entry_price) / position.avg_entry_price * 100
+        if position.avg_entry_price > 0
+        else None
+    )
+    return PositionPriceOut(
+        symbol=position.symbol, current_price=current_price,
+        unrealized_pnl=unrealized_pnl, unrealized_pnl_pct=unrealized_pnl_pct,
+    )
+
+
+@router.get("/positions/live-prices", response_model=PositionPricesResponse)
+async def get_positions_live_prices() -> PositionPricesResponse:
+    """P42: one real quote per open position (KIS for STOCK, Upbit for
+    CRYPTO) - "are open positions safe?" needs to know current P&L, not
+    just entry/stop price. Deliberately its own endpoint, not folded into
+    `/summary` - unlike every other field there, this makes real external
+    API calls per request, so the frontend polls it on its own, slower
+    cadence and only while the 포지션 탭 is actually open, instead of
+    every `/summary` refresh multiplying real KIS/Upbit call volume by
+    however many positions exist.
+    """
+    settings = get_settings()
+    async with session_scope() as session:
+        pos_result = await session.execute(select(PositionRow).where(PositionRow.quantity > 0))
+        positions = list(pos_result.scalars().all())
+
+    prices: list[PositionPriceOut] = []
+
+    stock_positions = [p for p in positions if p.asset_type == AssetType.STOCK.value]
+    if stock_positions and settings.kis_configured:
+        async with httpx.AsyncClient(base_url=settings.kis_rest_base_url) as client:
+            auth = KisAuth(client=client, settings=settings)
+            rest = KisRestClient(client, auth)
+            for position in stock_positions:
+                try:
+                    quote = await rest.get_quote(position.symbol)
+                    prices.append(_position_price_out(position, quote.price))
+                except (KisApiError, httpx.HTTPError, KeyError, ValueError):
+                    prices.append(_position_price_out(position, None))
+    else:
+        prices.extend(_position_price_out(p, None) for p in stock_positions)
+
+    crypto_positions = [p for p in positions if p.asset_type == AssetType.CRYPTO.value]
+    if crypto_positions:
+        async with httpx.AsyncClient(base_url=settings.upbit_rest_base_url) as client:
+            crypto_rest = UpbitRestClient(client)
+            for position in crypto_positions:
+                try:
+                    price = await crypto_rest.get_ticker_price(position.symbol)
+                    prices.append(_position_price_out(position, price))
+                except (UpbitApiError, httpx.HTTPError, KeyError, ValueError):
+                    prices.append(_position_price_out(position, None))
+
+    return PositionPricesResponse(prices=prices)

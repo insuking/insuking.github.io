@@ -1,8 +1,11 @@
-"""Approval HTTP API (P13).
+"""Approval HTTP API (P13, extended in P42).
 
 Endpoints for the mobile approval page (frontend `/approve/:token` route):
 GET to view an approval's current detail, POST to record a decision. See
 docs/MASTER_SPEC.md sections C-E for the security model this maps onto.
+Also `GET /api/approvals` (P42) - a read-only listing of a user's pending
+approvals, backing the home screen's "지금 확인" button; see that
+endpoint's own docstring for why it never exposes a usable token.
 
 Auth model (documented choice, not a placeholder): "authenticated user"
 means "holds a currently-valid Kakao Login session" -
@@ -21,6 +24,7 @@ brute-forcing here, since nothing about the header itself is a secret.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 import httpx
 from fastapi import APIRouter, Header, HTTPException
@@ -44,7 +48,7 @@ from app.approval.execution import (
     gather_upbit_revalidation_input,
 )
 from app.approval.rate_limit import check_and_record_attempt
-from app.approval.service import ApprovalDecision, ApprovalService
+from app.approval.service import TERMINAL_STATES, ApprovalDecision, ApprovalService
 from app.core.config import get_settings
 from app.db.models import Approval
 from app.db.models import Recommendation as RecommendationRow
@@ -185,6 +189,69 @@ async def _require_authenticated(session: AsyncSession, user_id: str) -> None:
         token = await store.get_valid_access_token(user_id)
     if token is None:
         raise ApprovalNotAuthenticatedError("No valid Kakao session for this user")
+
+
+class PendingApprovalOut(BaseModel):
+    id: str
+    symbol: str
+    asset_type: str
+    score: float
+    state: str
+    expires_at: str
+    remaining_seconds: int
+
+
+class PendingApprovalsResponse(BaseModel):
+    approvals: list[PendingApprovalOut]
+
+
+@router.get("", response_model=PendingApprovalsResponse)
+async def list_pending_approvals(x_user_id: str = Header(..., alias="X-User-Id")) -> PendingApprovalsResponse:
+    """P42: read-only visibility into `x_user_id`'s pending approvals -
+    backs the home screen's "지금 확인" button so a user can see *what*
+    is waiting without navigating away first. Deliberately never exposes
+    a usable token (only `Approval.token_hash` is ever stored - the
+    plaintext token only ever existed at creation time, sent via Kakao)
+    and this endpoint can't be used to decide anything either - the
+    secret token from the actual Kakao message stays the only way to
+    open/decide an approval (`get_approval()`/`decide_approval()` below).
+    Weakening that would trade away the extra "did you actually receive
+    the Kakao message" factor this project's approval flow relies on, for
+    a UX convenience - not a tradeoff to make silently.
+    """
+    async with session_scope() as session:
+        try:
+            await _require_authenticated(session, x_user_id)
+        except ApprovalNotAuthenticatedError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+        now = datetime.now(UTC)
+        result = await session.execute(
+            select(Approval, RecommendationRow)
+            .join(RecommendationRow, Approval.recommendation_id == RecommendationRow.id)
+            .where(
+                Approval.user_id == x_user_id,
+                Approval.state.not_in(TERMINAL_STATES),
+                Approval.expires_at > now,
+            )
+            .order_by(Approval.expires_at.asc())
+        )
+        rows = result.all()
+
+    return PendingApprovalsResponse(
+        approvals=[
+            PendingApprovalOut(
+                id=approval.id,
+                symbol=rec.symbol,
+                asset_type=rec.asset_type,
+                score=rec.score,
+                state=approval.state,
+                expires_at=approval.expires_at.isoformat(),
+                remaining_seconds=max(0, int((approval.expires_at - now).total_seconds())),
+            )
+            for approval, rec in rows
+        ]
+    )
 
 
 @router.get("/{token}", response_model=ApprovalDetailResponse)

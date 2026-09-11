@@ -38,6 +38,7 @@ class ScoreFactorOut(BaseModel):
 class StockRadarCandidateOut(BaseModel):
     symbol: str
     name: str | None
+    market: str | None
     rank: int | None
     total_score: float
     max_available: float
@@ -68,6 +69,7 @@ async def get_latest() -> StockRadarLatestOut:
                 StockRadarCandidateOut(
                     symbol=row.symbol,
                     name=security.name if security is not None else None,
+                    market=security.market if security is not None else None,
                     rank=row.rank,
                     total_score=row.prebreakout_score,
                     max_available=explanation.get("max_available", row.prebreakout_score),

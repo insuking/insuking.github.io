@@ -11,6 +11,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import delete
 
+from app.core.config import get_settings
 from app.db.models import (
     Approval,
     Candle,
@@ -33,6 +34,8 @@ from app.db.models import Recommendation as RecommendationRow
 from app.db.session import session_scope
 from app.guardian.health import SERVICE_NAME as GUARDIAN_SERVICE
 from app.guardian.health import record_heartbeat
+from app.integrations.upbit.errors import UpbitApiError
+from app.integrations.upbit.rest_client import UpbitRestClient
 from app.main import app
 from app.models.domain import HealthState
 from app.radar.macro_persistence import persist_macro_snapshot
@@ -501,3 +504,90 @@ async def test_performance_reports_risk_avoidance_counts_from_the_last_7_days() 
     assert avoidance["too_late_excluded_count"] >= 1
     assert avoidance["no_trade_day_count"] >= 1
     assert avoidance["window_days"] == 7
+
+
+@pytest.mark.P42
+async def test_positions_live_prices_computes_unrealized_pnl_for_a_crypto_position(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fake_get_ticker_price(self: UpbitRestClient, market: str) -> float:
+        return 90.0
+
+    monkeypatch.setattr(UpbitRestClient, "get_ticker_price", _fake_get_ticker_price)
+
+    now = datetime.now(UTC)
+    async with session_scope() as session:
+        session.add(
+            Position(
+                id="dash-pos-live-crypto", symbol=_SYMBOL, asset_type="CRYPTO", quantity=2.0,
+                avg_entry_price=80.0, stop_price=70.0, state="OPEN", guardian_active=True,
+                opened_at=now, updated_at=now,
+            )
+        )
+        await session.commit()
+
+    async with await _client() as client:
+        response = await client.get("/api/dashboard/positions/live-prices")
+
+    assert response.status_code == 200
+    entry = next(p for p in response.json()["prices"] if p["symbol"] == _SYMBOL)
+    assert entry["current_price"] == pytest.approx(90.0)
+    assert entry["unrealized_pnl"] == pytest.approx((90.0 - 80.0) * 2.0)
+    assert entry["unrealized_pnl_pct"] == pytest.approx(12.5)
+
+
+@pytest.mark.P42
+async def test_positions_live_prices_degrades_to_none_when_the_fetch_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _boom(self: UpbitRestClient, market: str) -> float:
+        raise UpbitApiError(500, "internal_server_error", "temporary")
+
+    monkeypatch.setattr(UpbitRestClient, "get_ticker_price", _boom)
+
+    now = datetime.now(UTC)
+    async with session_scope() as session:
+        session.add(
+            Position(
+                id="dash-pos-live-crypto-fail", symbol=_SYMBOL, asset_type="CRYPTO", quantity=1.0,
+                avg_entry_price=50.0, stop_price=45.0, state="OPEN", guardian_active=True,
+                opened_at=now, updated_at=now,
+            )
+        )
+        await session.commit()
+
+    async with await _client() as client:
+        response = await client.get("/api/dashboard/positions/live-prices")
+
+    entry = next(p for p in response.json()["prices"] if p["symbol"] == _SYMBOL)
+    assert entry["current_price"] is None
+    assert entry["unrealized_pnl"] is None
+    assert entry["unrealized_pnl_pct"] is None
+
+
+@pytest.mark.P42
+async def test_positions_live_prices_returns_none_for_a_stock_position_when_kis_is_not_configured() -> None:
+    settings = get_settings()
+    original_key, original_secret = settings.kis_app_key, settings.kis_app_secret
+    settings.kis_app_key = ""
+    settings.kis_app_secret = ""
+    try:
+        now = datetime.now(UTC)
+        async with session_scope() as session:
+            session.add(
+                Position(
+                    id="dash-pos-live-stock", symbol=_SYMBOL, asset_type="STOCK", quantity=10.0,
+                    avg_entry_price=70000.0, stop_price=68000.0, state="OPEN", guardian_active=True,
+                    opened_at=now, updated_at=now,
+                )
+            )
+            await session.commit()
+
+        async with await _client() as client:
+            response = await client.get("/api/dashboard/positions/live-prices")
+    finally:
+        settings.kis_app_key = original_key
+        settings.kis_app_secret = original_secret
+
+    entry = next(p for p in response.json()["prices"] if p["symbol"] == _SYMBOL)
+    assert entry["current_price"] is None

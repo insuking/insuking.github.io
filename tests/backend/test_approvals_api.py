@@ -16,12 +16,15 @@ connection - so they exercise the real endpoint wiring
 or Upbit credentials or network access.
 """
 
+import json
 from datetime import UTC, datetime, timedelta
 
-import app.api.approvals as approvals_api
 import httpx
 import pytest
 import pytest_asyncio
+from sqlalchemy import delete, select
+
+import app.api.approvals as approvals_api
 from app.approval.pin import hash_pin
 from app.approval.revalidation import RevalidationInput
 from app.approval.service import ApprovalService
@@ -32,7 +35,6 @@ from app.db.session import session_scope
 from app.integrations.kis.execution import KisExecutionProvider
 from app.integrations.upbit.execution import UpbitExecutionProvider
 from app.main import app
-from sqlalchemy import delete, select
 
 pytestmark = [pytest.mark.P13, pytest.mark.asyncio]
 
@@ -185,6 +187,65 @@ async def test_get_approval_403_for_wrong_user() -> None:
         response = await client.get(f"/api/approvals/{token}", headers={"X-User-Id": "someone-else"})
 
     assert response.status_code == 403
+
+
+@pytest.mark.P42
+async def test_list_pending_approvals_requires_authentication() -> None:
+    async with await _client() as client:
+        response = await client.get("/api/approvals", headers={"X-User-Id": _TEST_USER_ID})
+    assert response.status_code == 401
+
+
+@pytest.mark.P42
+async def test_list_pending_approvals_returns_the_users_pending_approval() -> None:
+    await _seed_valid_kakao_session(_TEST_USER_ID)
+    _, token = await _create_approval()
+
+    async with await _client() as client:
+        response = await client.get("/api/approvals", headers={"X-User-Id": _TEST_USER_ID})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["approvals"]) == 1
+    entry = body["approvals"][0]
+    assert entry["symbol"] == "KRW-XRP-API-TEST"
+    assert entry["asset_type"] == "CRYPTO"
+    assert entry["remaining_seconds"] > 0
+    # The plaintext token is never exposed by this listing (only its hash
+    # is ever stored) - no field on the response could be used to open or
+    # decide the approval without the real Kakao-delivered link.
+    assert token not in json.dumps(entry)
+
+
+@pytest.mark.P42
+async def test_list_pending_approvals_excludes_a_decided_approval() -> None:
+    await _seed_valid_kakao_session(_TEST_USER_ID)
+    _, token = await _create_approval()
+
+    async with await _client() as client:
+        decide_response = await client.post(
+            f"/api/approvals/{token}/decide",
+            json={"decision": "REJECT"},
+            headers={"X-User-Id": _TEST_USER_ID},
+        )
+        assert decide_response.status_code == 200
+
+        list_response = await client.get("/api/approvals", headers={"X-User-Id": _TEST_USER_ID})
+
+    assert list_response.json()["approvals"] == []
+
+
+@pytest.mark.P42
+async def test_list_pending_approvals_only_returns_the_requesting_users_own() -> None:
+    await _seed_valid_kakao_session(_TEST_USER_ID)
+    await _seed_valid_kakao_session("someone-else")
+    await _create_approval()
+
+    async with await _client() as client:
+        response = await client.get("/api/approvals", headers={"X-User-Id": "someone-else"})
+
+    assert response.status_code == 200
+    assert response.json()["approvals"] == []
 
 
 async def test_decide_reject_then_reuse_returns_410() -> None:
