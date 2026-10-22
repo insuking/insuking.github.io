@@ -1,0 +1,46 @@
+.hold-confirm-button {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  min-height: 52px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-size: 0.95rem;
+  font-weight: 700;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: none;
+}
+
+.hold-confirm-button:disabled {
+  opacity: 0.5;
+}
+
+.hold-confirm-button--danger {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.hold-confirm-button__fill {
+  position: absolute;
+  inset: 0;
+  width: 0%;
+  background: var(--color-primary-tint);
+  transition-property: width;
+  transition-timing-function: linear;
+}
+
+.hold-confirm-button--danger .hold-confirm-button__fill {
+  background: var(--color-danger-tint);
+}
+
+.hold-confirm-button--holding .hold-confirm-button__fill {
+  width: 100%;
+}
+
+.hold-confirm-button__label {
+  position: relative;
+  z-index: 1;
+}

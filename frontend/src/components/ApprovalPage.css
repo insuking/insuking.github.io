@@ -1,0 +1,207 @@
+.approval-page {
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100vh;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: var(--color-bg);
+}
+
+.approval-page__notice {
+  text-align: center;
+  color: var(--color-text-tertiary);
+  padding: 24px 0;
+}
+
+.approval-page__notice--error {
+  color: var(--color-danger);
+}
+
+.approval-page__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+}
+
+.approval-page__symbol {
+  font-weight: 700;
+  font-size: 1.3rem;
+  letter-spacing: -0.01em;
+}
+
+.approval-page__badge {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-primary-dark);
+  background: var(--color-primary-tint);
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+}
+
+.approval-page__countdown {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--color-warn);
+  margin: 0;
+}
+
+.approval-page__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 10px;
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+  box-shadow: var(--shadow-card);
+}
+
+.approval-page__cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.approval-page__label {
+  font-size: 0.75rem;
+  color: var(--color-text-tertiary);
+}
+
+.approval-page__value {
+  font-weight: 700;
+  font-size: 0.98rem;
+  letter-spacing: -0.01em;
+}
+
+.approval-page__details {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  font-size: 0.85rem;
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px;
+  box-shadow: var(--shadow-card);
+}
+
+.approval-page__details-title {
+  font-weight: 700;
+  margin: 0 0 6px;
+}
+
+.approval-page__details ul {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--color-text-secondary);
+}
+
+.approval-page__details li {
+  margin-bottom: 4px;
+}
+
+.approval-page__execution-notice {
+  background: var(--color-danger-tint);
+  color: var(--color-danger);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px;
+  font-size: 0.85rem;
+  box-shadow: var(--shadow-danger);
+}
+
+.approval-page__execution-notice .approval-page__details-title {
+  color: var(--color-danger);
+}
+
+.approval-page__execution-notice ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.approval-page__execution-notice li {
+  margin-bottom: 4px;
+}
+
+.approval-page__pin-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  box-shadow: var(--shadow-card);
+}
+
+.approval-page__input {
+  min-height: 48px;
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0 14px;
+  font-size: 1rem;
+  background: var(--color-surface-muted);
+}
+
+.approval-page__input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.approval-page__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.approval-page__cta {
+  min-height: 52px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
+  color: var(--color-text);
+  font-size: 0.95rem;
+  font-weight: 700;
+  transition:
+    background-color 0.15s ease,
+    box-shadow 0.2s var(--ease-standard),
+    transform 0.12s var(--ease-standard);
+}
+
+.approval-page__cta:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.approval-page__cta--primary {
+  background: var(--color-primary);
+  color: white;
+  box-shadow: var(--shadow-primary);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .approval-page__cta--primary:not(:disabled):hover {
+    box-shadow: var(--shadow-primary-hover);
+  }
+}
+
+.approval-page__cta--primary:active:not(:disabled) {
+  background: var(--color-primary-dark);
+  box-shadow: var(--shadow-primary);
+}
+
+.approval-page__cta--danger {
+  background: var(--color-danger-tint);
+  color: var(--color-danger);
+  box-shadow: var(--shadow-danger);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .approval-page__cta--danger:not(:disabled):hover {
+    box-shadow: var(--shadow-danger-hover);
+  }
+}
+
+.approval-page__cta:disabled {
+  background: var(--color-border);
+  color: var(--color-text-tertiary);
+  box-shadow: none;
+}

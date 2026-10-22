@@ -1,0 +1,64 @@
+.stock-card {
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: var(--shadow-card);
+  transition:
+    box-shadow 0.2s var(--ease-standard),
+    transform 0.2s var(--ease-standard);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .stock-card:hover {
+    box-shadow: var(--shadow-card-hover);
+    transform: translateY(-2px);
+  }
+}
+
+.stock-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+}
+
+.stock-card__rank {
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: var(--color-text-tertiary);
+  margin-right: 8px;
+}
+
+.stock-card__symbol {
+  font-weight: 700;
+  font-size: 1.02rem;
+  letter-spacing: -0.01em;
+}
+
+.stock-card__score {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--color-primary-dark);
+}
+
+.stock-card__factors {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.85rem;
+}
+
+.stock-card__factors--positive {
+  color: var(--color-gain);
+}
+
+.stock-card__factors--negative {
+  color: var(--color-loss);
+}
+
+.stock-card__factors li {
+  margin-bottom: 2px;
+}

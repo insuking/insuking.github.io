@@ -1,0 +1,631 @@
+"""SQLAlchemy ORM tables (P2, extended in P12/P13/P18).
+
+Maps the P1 domain model onto persistent storage. Table names and grouping
+follow docs/MASTER_SPEC.md section P2 exactly:
+
+    market_ticks, candles, features, signals, recommendations, approvals,
+    trade_plans, orders, fills, positions, protective_orders, system_health,
+    incidents, audit_logs, performance
+
+`market_ticks`, `candles`, `features`, `signals`, and `performance` are
+time-series tables intended to be TimescaleDB hypertables (see
+migrations/versions for the `create_hypertable` call, which is skipped with a
+logged warning when the `timescaledb` extension isn't installed - e.g. on a
+plain Postgres dev instance - rather than failing the migration outright).
+
+Three tables sit outside that original P2 list, added when a later phase
+needed somewhere durable that P2 didn't anticipate: `kakao_accounts` (P12,
+OAuth tokens - see app/integrations/kakao/token_store.py), `approval_events`
+(P13, the audit trail docs/MASTER_SPEC.md section E requires for every
+approval state transition - see app/approval/service.py), `risk_states`
+(P18, an append-only log of `RiskState` snapshots - see
+app/risk/state_store.py - mirroring `system_health`'s append-log shape
+rather than a single mutable row, so a kill-switch trigger's history isn't
+overwritten by the next evaluation), and `paper_accounts`/
+`paper_positions`/`paper_orders`/`paper_fills` (P20 - see
+app/paper_trading/ledger.py). The paper-trading tables are deliberately
+separate from `orders`/`fills`/`positions` rather than reusing them with a
+"PAPER" broker tag: P16's Guardian and P18's risk engine read `positions`/
+`orders` directly, and a paper trade must never be visible to - or
+protected/blocked by - the logic that manages real money.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+def _uuid() -> str:
+    return str(uuid.uuid4())
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class MarketTick(Base):
+    __tablename__ = "market_ticks"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    symbol: Mapped[str] = mapped_column(String, index=True)
+    asset_type: Mapped[str] = mapped_column(String)
+    exchange: Mapped[str] = mapped_column(String)
+    market: Mapped[str] = mapped_column(String)
+    price: Mapped[float] = mapped_column(Float)
+    volume: Mapped[float] = mapped_column(Float)
+    exchange_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    received_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class Candle(Base):
+    __tablename__ = "candles"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    symbol: Mapped[str] = mapped_column(String, index=True)
+    interval: Mapped[str] = mapped_column(String)
+    open: Mapped[float] = mapped_column(Float)
+    high: Mapped[float] = mapped_column(Float)
+    low: Mapped[float] = mapped_column(Float)
+    close: Mapped[float] = mapped_column(Float)
+    volume: Mapped[float] = mapped_column(Float)
+    open_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    close_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class Feature(Base):
+    __tablename__ = "features"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    symbol: Mapped[str] = mapped_column(String, index=True)
+    name: Mapped[str] = mapped_column(String)
+    value: Mapped[float] = mapped_column(Float)
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+
+
+class SignalRow(Base):
+    __tablename__ = "signals"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    symbol: Mapped[str] = mapped_column(String, index=True)
+    name: Mapped[str] = mapped_column(String)
+    value: Mapped[float] = mapped_column(Float)
+    state: Mapped[str | None] = mapped_column(String, nullable=True)
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+
+
+class Recommendation(Base):
+    __tablename__ = "recommendations"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    symbol: Mapped[str] = mapped_column(String, index=True)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+    asset_type: Mapped[str] = mapped_column(String)
+    score: Mapped[float] = mapped_column(Float)
+    state: Mapped[str] = mapped_column(String)
+    entry_low: Mapped[float] = mapped_column(Float)
+    entry_high: Mapped[float] = mapped_column(Float)
+    stop_price: Mapped[float] = mapped_column(Float)
+    t1_price: Mapped[float] = mapped_column(Float)
+    t1_percent: Mapped[float] = mapped_column(Float)
+    t2_price: Mapped[float] = mapped_column(Float)
+    t2_percent: Mapped[float] = mapped_column(Float)
+    runner_percent: Mapped[float] = mapped_column(Float)
+    expected_max_loss: Mapped[float] = mapped_column(Float)
+    risk_reward: Mapped[float] = mapped_column(Float)
+    reasons: Mapped[str] = mapped_column(Text, default="[]")
+    risks: Mapped[str] = mapped_column(Text, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class Approval(Base):
+    __tablename__ = "approvals"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    recommendation_id: Mapped[str] = mapped_column(
+        String, ForeignKey("recommendations.id"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    state: Mapped[str] = mapped_column(String)
+    token_hash: Mapped[str] = mapped_column(String, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class TradePlan(Base):
+    __tablename__ = "trade_plans"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    approval_id: Mapped[str] = mapped_column(String, ForeignKey("approvals.id"), index=True)
+    symbol: Mapped[str] = mapped_column(String, index=True)
+    initial_qty: Mapped[float] = mapped_column(Float)
+    t1_percent: Mapped[float] = mapped_column(Float, default=30.0)
+    t2_percent: Mapped[float] = mapped_column(Float, default=30.0)
+    runner_percent: Mapped[float] = mapped_column(Float, default=40.0)
+    entry_price: Mapped[float] = mapped_column(Float)
+    stop_price: Mapped[float] = mapped_column(Float)
+    t1_price: Mapped[float] = mapped_column(Float)
+    t2_price: Mapped[float] = mapped_column(Float)
+
+
+class Order(Base):
+    __tablename__ = "orders"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    trade_plan_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("trade_plans.id"), nullable=True, index=True
+    )
+    symbol: Mapped[str] = mapped_column(String, index=True)
+    side: Mapped[str] = mapped_column(String)
+    order_type: Mapped[str] = mapped_column(String)
+    quantity: Mapped[float] = mapped_column(Float)
+    price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String)
+    broker: Mapped[str] = mapped_column(String)
+    broker_order_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class Fill(Base):
+    __tablename__ = "fills"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    order_id: Mapped[str] = mapped_column(String, ForeignKey("orders.id"), index=True)
+    quantity: Mapped[float] = mapped_column(Float)
+    price: Mapped[float] = mapped_column(Float)
+    filled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class Position(Base):
+    __tablename__ = "positions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    symbol: Mapped[str] = mapped_column(String, index=True)
+    asset_type: Mapped[str] = mapped_column(String)
+    quantity: Mapped[float] = mapped_column(Float)
+    avg_entry_price: Mapped[float] = mapped_column(Float)
+    stop_price: Mapped[float] = mapped_column(Float)
+    state: Mapped[str] = mapped_column(String)
+    guardian_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ProtectiveOrder(Base):
+    """Stop-loss / take-profit orders guarding an open position (P16/P17)."""
+
+    __tablename__ = "protective_orders"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    position_id: Mapped[str] = mapped_column(String, ForeignKey("positions.id"), index=True)
+    kind: Mapped[str] = mapped_column(String)  # STOP | T1 | T2 | TRAILING
+    trigger_price: Mapped[float] = mapped_column(Float)
+    quantity: Mapped[float] = mapped_column(Float)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SystemHealthRow(Base):
+    __tablename__ = "system_health"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    service: Mapped[str] = mapped_column(String, index=True)
+    state: Mapped[str] = mapped_column(String)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class Incident(Base):
+    """See docs/MASTER_SPEC.md section R."""
+
+    __tablename__ = "incidents"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    service: Mapped[str] = mapped_column(String, index=True)
+    severity: Mapped[str] = mapped_column(String)
+    failure_type: Mapped[str] = mapped_column(String)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    safe_action: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recovery_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    recovered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    verification_result: Mapped[str | None] = mapped_column(String, nullable=True)
+    human_action_required: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    actor: Mapped[str] = mapped_column(String, index=True)
+    action: Mapped[str] = mapped_column(String)
+    subject_type: Mapped[str] = mapped_column(String)
+    subject_id: Mapped[str] = mapped_column(String, index=True)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class Performance(Base):
+    __tablename__ = "performance"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    realized_pnl: Mapped[float] = mapped_column(Float, default=0.0)
+    unrealized_pnl: Mapped[float] = mapped_column(Float, default=0.0)
+    win_count: Mapped[int] = mapped_column(Integer, default=0)
+    loss_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class KakaoAccount(Base):
+    """One user's Kakao Login OAuth tokens (P12).
+
+    `user_id` is this application's own user identifier (the same value
+    `Approval.user_id` carries) - `kakao_user_id` is Kakao's own per-app
+    numeric id, kept separately since nothing guarantees the two schemes
+    ever coincide.
+    """
+
+    __tablename__ = "kakao_accounts"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String, unique=True, index=True)
+    kakao_user_id: Mapped[str] = mapped_column(String, unique=True, index=True)
+    access_token: Mapped[str] = mapped_column(Text)
+    refresh_token: Mapped[str] = mapped_column(Text)
+    access_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    refresh_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    talk_message_consent: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ApprovalEvent(Base):
+    """One state transition (or a non-terminal decision like HOLD) in an
+    approval's lifecycle (P13) - docs/MASTER_SPEC.md section E requires this
+    audit trail. `from_state` is null for the row created alongside the
+    approval itself (there is no prior state yet). `detail` is a JSON blob
+    (e.g. `{"override_amount": ...}` or `{"reasons": [...]}` from P14's
+    revalidation) - free-form because what's worth recording differs by
+    transition, not a fixed schema.
+    """
+
+    __tablename__ = "approval_events"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    approval_id: Mapped[str] = mapped_column(String, ForeignKey("approvals.id"), index=True)
+    from_state: Mapped[str | None] = mapped_column(String, nullable=True)
+    to_state: Mapped[str] = mapped_column(String)
+    actor: Mapped[str] = mapped_column(String)  # a user_id, or "system"
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class RiskStateRow(Base):
+    """One `RiskState` (P1) snapshot, as evaluated by P18's kill switch -
+    append-only, like `system_health`, so "current" means "latest by
+    `as_of`" and a triggered kill switch's history survives the next
+    evaluation rather than being overwritten in place.
+    """
+
+    __tablename__ = "risk_states"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    daily_loss: Mapped[float] = mapped_column(Float)
+    daily_loss_limit: Mapped[float] = mapped_column(Float)
+    exposure: Mapped[float] = mapped_column(Float)
+    exposure_limit: Mapped[float] = mapped_column(Float)
+    open_positions: Mapped[int] = mapped_column(Integer)
+    max_positions: Mapped[int] = mapped_column(Integer)
+    consecutive_stops: Mapped[int] = mapped_column(Integer)
+    kill_switch_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    kill_switch_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class PaperAccount(Base):
+    """A simulated cash balance (P20) - one per broker sandbox
+    (`PAPER_TOSS`, `PAPER_UPBIT`), never shared with a real account.
+    """
+
+    __tablename__ = "paper_accounts"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # e.g. "PAPER_TOSS"
+    asset_type: Mapped[str] = mapped_column(String)
+    cash_balance: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class PaperPosition(Base):
+    """A simulated open position (P20), long-only like the real spot
+    accounts this project ever trades on.
+
+    `stop_price`/`t2_price` (P24) are nullable because P20's own
+    ledger-driven positions never set them - only
+    `app/scan/auto_paper_trade.py` does, to remember the exit plan a
+    recommendation implied so a later run can decide whether to close the
+    position, without needing a separate table for two numbers."""
+
+    __tablename__ = "paper_positions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    account_id: Mapped[str] = mapped_column(String, ForeignKey("paper_accounts.id"), index=True)
+    symbol: Mapped[str] = mapped_column(String, index=True)
+    quantity: Mapped[float] = mapped_column(Float)
+    avg_entry_price: Mapped[float] = mapped_column(Float)
+    stop_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    t2_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class PaperOrder(Base):
+    """A simulated order (P20) - mirrors `Order`'s shape so the paper and
+    real code paths stay easy to compare, without being the same table."""
+
+    __tablename__ = "paper_orders"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    account_id: Mapped[str] = mapped_column(String, ForeignKey("paper_accounts.id"), index=True)
+    symbol: Mapped[str] = mapped_column(String, index=True)
+    side: Mapped[str] = mapped_column(String)
+    order_type: Mapped[str] = mapped_column(String)
+    quantity: Mapped[float] = mapped_column(Float)
+    limit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String)
+    rejection_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class PaperFill(Base):
+    """A simulated fill (P20) - the realistic-cost record `orders`/`fills`
+    would carry for a real trade: quantity/price actually simulated
+    (spread + slippage already baked into `price`), plus commission and tax
+    broken out so PnL can be reconstructed and audited."""
+
+    __tablename__ = "paper_fills"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    order_id: Mapped[str] = mapped_column(String, ForeignKey("paper_orders.id"), index=True)
+    quantity: Mapped[float] = mapped_column(Float)
+    price: Mapped[float] = mapped_column(Float)
+    slippage_amount: Mapped[float] = mapped_column(Float)
+    commission: Mapped[float] = mapped_column(Float)
+    tax: Mapped[float] = mapped_column(Float)
+    latency_ms: Mapped[int] = mapped_column(Integer)
+    filled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SecurityRow(Base):
+    """KRX securities master (P23) - screening metadata daily OHLCV alone
+    can't carry (sector, market cap, halt/management-issue/ETF flags).
+    Keyed by `symbol` rather than a synthetic id, matching every other
+    table in this file (`candles`, `recommendations`, `positions`, ...) -
+    nothing else here joins through a numeric foreign key, so this
+    doesn't either. Daily stock OHLCV itself reuses the existing `candles`
+    table (`interval="1d"`) rather than a separate `daily_prices` table -
+    same shape, no reason to duplicate it."""
+
+    __tablename__ = "securities"
+
+    symbol: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String)
+    market: Mapped[str] = mapped_column(String)  # KOSPI | KOSDAQ
+    sector_code: Mapped[str | None] = mapped_column(String, nullable=True)
+    sector_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    market_cap: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    shares_outstanding: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    is_etf: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_etn: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_spac: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_preferred: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_trading_halt: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_management_issue: Mapped[bool] = mapped_column(Boolean, default=False)
+    liquidity_grade: Mapped[str | None] = mapped_column(String, nullable=True)
+    data_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class RadarFeatureRow(Base):
+    """One symbol's computed P23 feature snapshot (append-only, like
+    `system_health`/`risk_states` - each scan run's inputs stay auditable
+    rather than being overwritten by the next one)."""
+
+    __tablename__ = "radar_features"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    symbol: Mapped[str] = mapped_column(String, index=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    price_return_1d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    price_return_5d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    price_return_20d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    atr_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bollinger_width: Mapped[float | None] = mapped_column(Float, nullable=True)
+    compression_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    volume_ratio_5d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    value_ratio_20d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    obv_slope: Mapped[float | None] = mapped_column(Float, nullable=True)
+    distance_20d_high: Mapped[float | None] = mapped_column(Float, nullable=True)
+    close_location_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    benchmark_relative_strength: Mapped[float | None] = mapped_column(Float, nullable=True)
+    liquidity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    feature_version: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class RadarScoreRow(Base):
+    """One symbol's P23 PRE-BREAKOUT score for one scan run - `explanation`
+    is a JSON-encoded {"positive": [...], "negative": [...]} object (see
+    app/stock_radar/scoring.py), stored as `Text` like every other JSON
+    blob in this file (`Recommendation.reasons/risks`, `Approval.detail`) -
+    this project has no native-JSON column anywhere, so this doesn't
+    introduce one."""
+
+    __tablename__ = "radar_scores"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    symbol: Mapped[str] = mapped_column(String, index=True)
+    scan_run_id: Mapped[str] = mapped_column(String, index=True)
+    scored_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    prebreakout_score: Mapped[float] = mapped_column(Float)
+    rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    model_version: Mapped[str] = mapped_column(String)
+    explanation: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ModelWeightVersionRow(Base):
+    """A versioned, auditable snapshot of the PRE-BREAKOUT scoring weights
+    (P23) - `weights` is JSON-encoded (same Text convention as above).
+    `effective_to IS NULL` means this is the currently active version - a
+    later weekly-learning phase creates new rows here rather than mutating
+    one in place, the same append-only pattern `risk_states` uses."""
+
+    __tablename__ = "model_weight_versions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    model_name: Mapped[str] = mapped_column(String, index=True)
+    version: Mapped[str] = mapped_column(String)
+    weights: Mapped[str] = mapped_column(Text)
+    effective_from: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    effective_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class RegimeRelativeStrengthRow(Base):
+    """P34: one symbol's Market Regime x Relative Strength interaction
+    reading for one scan run - `app/stock_radar/regime_interaction.py`'s
+    `InteractionScore`, persisted for later review (see that module's own
+    docstring for exactly what each score means and what's deliberately
+    not implemented - no sector-index or program-flow columns here, since
+    this project has no data source for either). Keyed by generated `id`
+    + indexed `symbol`, same append-only-per-run shape as `radar_scores`
+    (`RadarScoreRow`) rather than one mutable row per symbol, so a
+    history of readings survives across scans."""
+
+    __tablename__ = "regime_relative_strength"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    symbol: Mapped[str] = mapped_column(String, index=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    benchmark_return_pct: Mapped[float] = mapped_column(Float)
+    stock_return_pct: Mapped[float] = mapped_column(Float)
+    foreign_net_today: Mapped[float] = mapped_column(Float)
+    institution_net_today: Mapped[float] = mapped_column(Float)
+    market_regime: Mapped[str] = mapped_column(String)
+    weak_market_resilience_score: Mapped[float] = mapped_column(Float)
+    flow_resilience_score: Mapped[float] = mapped_column(Float)
+    interaction_score: Mapped[float] = mapped_column(Float)
+    label: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class OverheatScoreRow(Base):
+    """P35: one symbol's Overheat/TOO LATE reading for one scan run -
+    `app/stock_radar/overheat.py`'s `HeatScore`. `(symbol, observed_at)`
+    as the primary key (rather than a generated id) matches this phase's
+    own spec exactly - one reading per symbol per observation time, not
+    an open-ended append log, since a later run for the same symbol at
+    the same `observed_at` should replace rather than duplicate (same
+    idempotent-upsert intent `SecurityRow` already uses for `name`/
+    `market`, just enforced here at the schema level via the composite
+    key instead of application-level upsert logic)."""
+
+    __tablename__ = "overheat_scores"
+
+    symbol: Mapped[str] = mapped_column(String, primary_key=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    return_1d_pct: Mapped[float] = mapped_column(Float)
+    return_2d_pct: Mapped[float] = mapped_column(Float)
+    return_5d_pct: Mapped[float] = mapped_column(Float)
+    distance_from_signal_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    gap_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    volume_ratio: Mapped[float] = mapped_column(Float)
+    atr_extension: Mapped[float | None] = mapped_column(Float, nullable=True)
+    heat_score: Mapped[float] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class DailyDecisionRow(Base):
+    """P36: one `scripts/reconfirm_entries.py` run's overall stock-radar
+    call (`app/stock_radar/decision.py`'s `decide_daily_state()`), keyed
+    by generated `id` + indexed `observed_at` - append-only, same shape as
+    `RadarScoreRow`/`RegimeRelativeStrengthRow`, so the 시장 tab can show
+    "오늘의 판정" from the latest row and a later review can see how it
+    changed across the day's several reconfirm runs (the scheduler, P32,
+    runs this every `SCHEDULER_STOCK_INTERVAL_SECONDS` during KRX hours -
+    not just once), not only today's final call. `top_symbol`/
+    `top_symbol_name`/`top_normalized_score` are nullable: a
+    `NO_TRADE_DAY` with nothing scanned at all still gets a row, just
+    without a "this one almost made it" candidate to point at."""
+
+    __tablename__ = "daily_decisions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    market_regime: Mapped[str] = mapped_column(String)
+    minimum_score: Mapped[float] = mapped_column(Float)
+    decision_state: Mapped[str] = mapped_column(String)
+    top_symbol: Mapped[str | None] = mapped_column(String, nullable=True)
+    top_symbol_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    top_normalized_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entry_filters_passed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    entry_filters_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class MacroSnapshotRow(Base):
+    """P38: one 08:20 KST premarket macro check
+    (`app/radar/macro_regime.py`) - append-only like `DailyDecisionRow`/
+    `RegimeRelativeStrengthRow`, so a later review can see how the macro
+    regime moved day to day, not just today's latest reading. Every
+    metric column is nullable because one symbol's fetch failing
+    (`scripts/scan_macro.py`'s per-symbol error handling) must not
+    discard the other real readings for the day - a `None` here always
+    means "not fetched," never a fabricated 0."""
+
+    __tablename__ = "macro_snapshots"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    sp500_change_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sox_change_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    vix_level: Mapped[float | None] = mapped_column(Float, nullable=True)
+    oil_change_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    usdkrw_change_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    regime: Mapped[str] = mapped_column(String)
+    headline: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AccountBalanceSnapshotRow(Base):
+    """P45: one periodic real combined-balance reading (KIS + Upbit),
+    append-only like `MacroSnapshotRow`/`RegimeRelativeStrengthRow` - the
+    home screen's "자산 추이" (asset trend) chart reads real history from
+    this table rather than a fabricated curve. `kis_total_value`/
+    `upbit_total_value` are nullable independently - a broker not
+    configured, or one real fetch failing while the other succeeds, must
+    not discard the other broker's real reading (same "partial real data
+    beats no data" rule `MacroSnapshotRow` already documents).
+    `total_assets` sums whichever of the two were actually available this
+    snapshot (0 if neither), so the trend line is always plottable even
+    while one broker is unconfigured."""
+
+    __tablename__ = "account_balance_snapshots"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    kis_total_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    upbit_total_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    total_assets: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

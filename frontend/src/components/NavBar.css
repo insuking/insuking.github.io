@@ -1,0 +1,47 @@
+.nav-bar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+.nav-bar__item {
+  flex: 1;
+  min-height: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  text-align: center;
+  padding: 8px 2px 6px;
+  text-decoration: none;
+  color: var(--color-text-tertiary);
+  transition:
+    color 0.15s ease,
+    transform 0.12s var(--ease-standard);
+}
+
+.nav-bar__item:active {
+  transform: scale(0.92);
+}
+
+.nav-bar__icon {
+  width: 22px;
+  height: 22px;
+}
+
+.nav-bar__label {
+  font-size: 0.68rem;
+  font-weight: 500;
+}
+
+.nav-bar__item--active {
+  color: var(--color-primary);
+}
+
+.nav-bar__item--active .nav-bar__label {
+  font-weight: 700;
+}
